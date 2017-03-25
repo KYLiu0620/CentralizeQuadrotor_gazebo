@@ -37,9 +37,11 @@ using namespace arma;
 const int RobotNum = 4;				//n
 const int TaskSpaceDimension = 6;	//m
 const int RobotDOF = 3;				//phi
-const double alpha = 1;			//work envolope scaling factor
+const double alpha = 0.1;			//work envolope scaling factor
 const double MatElementTolerence = 0.00001;	//when using inv,pinv, the consequence less than this will equal to zero
 mat X_m( TaskSpaceDimension, 1, fill::zeros );
+mat X_m_last(TaskSpaceDimension, 1, fill::zeros);
+mat X_m_temp(TaskSpaceDimension, 1, fill::zeros);
 mat X_s( TaskSpaceDimension, 1, fill::zeros );
 mat X_s_last(TaskSpaceDimension, 1, fill::zeros);
 mat XDot_s( TaskSpaceDimension, 1, fill::zeros );
@@ -192,14 +194,11 @@ int _tmain(int argc, _TCHAR* argv[])
 	*/
 
 	//	set omni & scheduler
-	
 	DeviceID_1 = hdInitDevice(DEVICE_NAME_1);
 	DeviceID_2 = hdInitDevice(DEVICE_NAME_2);
 	hdStartScheduler();
-	//HDSchedulerHandle Scheduler_GetInfo = hdScheduleAsynchronous(GetInfoCallback, 0, HD_MAX_SCHEDULER_PRIORITY);
-	
-	HDSchedulerHandle Scheduler_GetCmd1 = hdScheduleAsynchronous(GetCmd1Callback, 0, HD_MAX_SCHEDULER_PRIORITY);
-	HDSchedulerHandle Scheduler_GetCmd2 = hdScheduleAsynchronous(GetCmd2Callback, 0, HD_MAX_SCHEDULER_PRIORITY);
+	HDSchedulerHandle Scheduler_GetCmd1 = hdScheduleAsynchronous(GetCmd1Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
+	HDSchedulerHandle Scheduler_GetCmd2 = hdScheduleAsynchronous(GetCmd2Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
 	
 	//	use sendto() before using recvfrom() to implicitly bind
 	stringstream ssFirstSend;
@@ -233,14 +232,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		X_s_last = X_s;
 		e_s_last = e_s;
 
-		//	receive from master and then update X_m
-		if (!hdWaitForCompletion(Scheduler_GetCmd1, HD_WAIT_CHECK_STATUS))
-		{
-			fprintf(stderr, "Press any key to quit.\n");
-			_getch();
-			break;
-		}
-		if (!hdWaitForCompletion(Scheduler_GetCmd2, HD_WAIT_CHECK_STATUS))
+		//	receive from master and then update X_m_temp
+		if (!hdWaitForCompletion(Scheduler_GetCmd1, HD_WAIT_CHECK_STATUS) || !hdWaitForCompletion(Scheduler_GetCmd2, HD_WAIT_CHECK_STATUS))
 		{
 			fprintf(stderr, "Press any key to quit.\n");
 			_getch();
@@ -285,19 +278,23 @@ int _tmain(int argc, _TCHAR* argv[])
 			}
 			X_s(axis + TaskSpaceDimension / 2, 0) = VarSum / (double)RobotNum;
 		}
-		
-		X_m.t().print("X_m:");
+
+		//	update X_m
+		X_m = X_m_temp;	//don't put this just after hdWaitForCompletion,
+						//or the callback could not be completed yet
+						//and the value might be changed unexpected
+
 		if (loopCount < 2)
 		{
 			X_m_initial = X_m;
 			X_s_initial = X_s;
 		}
-		
 		X_m -= X_m_initial;
 		X_s -= X_s_initial;
+		/*
 		X_m.t().print("X_m:");
 		X_s.t().print("X_s:");
-
+		*/
 		//update time derivative of X,q,qDot
 		if (loopCount != 0)	//skip at first because last value doesn't exist
 		{
@@ -312,16 +309,17 @@ int _tmain(int argc, _TCHAR* argv[])
 		 */		
 		e_m = X_s / alpha - X_m;
 		e_s = X_m * alpha - X_s;
+
 		eDot_s = timeDerivative(e_s_last, e_s);
 		e_s.t().print("e_s");
 		//J_m = ;
 
-/*
+
 		//	uncomment to fix variance
 		e_s(3, 0) = 0.0;
 		e_s(4, 0) = 0.0;
 		e_s(5, 0) = 0.0;
-*/
+
 		mat SlaveAveragePosition(RobotDOF, 1, fill::zeros);
 		for (int axis = 0; axis < RobotDOF; axis++)
 		{
@@ -470,6 +468,13 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 
 	//--------end--------
+	hdStopScheduler();
+	hdUnschedule(Scheduler_GetCmd1);
+	hdUnschedule(Scheduler_GetCmd2);
+	hdDisableDevice(DeviceID_1);
+	hdDisableDevice(DeviceID_2);
+	closesocket(s);
+	WSACleanup();
 
 	system("PAUSE");
 	return 0;
@@ -484,17 +489,15 @@ mat timeDerivative(mat last, mat now)
 HDCallbackCode HDCALLBACK GetCmd1Callback(void *data)
 {
 	HDdouble command[TaskSpaceDimension / 2];
-	vec commandVector(TaskSpaceDimension / 2, fill::zeros);
+
 	//	read command from omni
 	hdBeginFrame(DeviceID_1);
 	hdGetDoublev(HD_CURRENT_POSITION, command);
 	for (int axis = 0; axis < TaskSpaceDimension / 2; axis++)
 	{
-		commandVector(axis) = command[axis];
+		X_m_temp(axis, 0) = command[axis];
 	}
-	//	filter and update task space
-	X_m(0, 0, size(3, 1)) = medianFilter(&OmniBuf1, &commandVector, &OmniBufFlag1);
-
+	
 	hdEndFrame(DeviceID_1);
 	return HD_CALLBACK_CONTINUE;
 }
@@ -502,17 +505,15 @@ HDCallbackCode HDCALLBACK GetCmd1Callback(void *data)
 HDCallbackCode HDCALLBACK GetCmd2Callback(void *data)
 {
 	HDdouble command[TaskSpaceDimension / 2];
-	vec commandVector(TaskSpaceDimension / 2, fill::zeros);
+
 	//	read command from omni
 	hdBeginFrame(DeviceID_2);
 	hdGetDoublev(HD_CURRENT_POSITION, command);
 	for (int axis = 0; axis < TaskSpaceDimension / 2; axis++)
 	{
-		commandVector(axis) = command[axis];
+		X_m_temp(3 + axis, 0) = command[axis];
 	}
-	//	filter and update task space
-	X_m(3, 0, size(3, 1)) = medianFilter(&OmniBuf2, &commandVector, &OmniBufFlag2);
-
+	
 	hdEndFrame(DeviceID_2);
 	return HD_CALLBACK_CONTINUE;
 }

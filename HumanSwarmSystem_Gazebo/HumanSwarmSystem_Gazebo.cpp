@@ -229,6 +229,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		q_m_last = q_m;
 		q_s_last = q_s;
 		qDot_s_last = qDot_s;
+		X_m_last = X_m;
 		X_s_last = X_s;
 		e_s_last = e_s;
 
@@ -261,6 +262,11 @@ int _tmain(int argc, _TCHAR* argv[])
 		ss_from_slave.str("");
 		ss_from_slave.clear();
 
+		//filter q_s
+		if (abs(q_s - q_s_last).max() < 0.001)
+			q_s = q_s_last;
+
+
 		//	update X_s
 		for (int axis = 0; axis < 3; axis++)
 		{
@@ -279,10 +285,16 @@ int _tmain(int argc, _TCHAR* argv[])
 			X_s(axis + TaskSpaceDimension / 2, 0) = VarSum / (double)RobotNum;
 		}
 
-		//	update X_m
+		//	update X_m & filter
 		X_m = X_m_temp;	//don't put this just after hdWaitForCompletion,
 						//or the callback could not be completed yet
 						//and the value might be changed unexpected
+
+		//filter q_s
+		if (abs(X_m - X_m_last).max() < 0.01)
+			X_m = X_m_last;
+
+
 
 		if (loopCount < 2)
 		{
@@ -291,6 +303,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 		X_m -= X_m_initial;
 		X_s -= X_s_initial;
+		
 		/*
 		X_m.t().print("X_m:");
 		X_s.t().print("X_s:");

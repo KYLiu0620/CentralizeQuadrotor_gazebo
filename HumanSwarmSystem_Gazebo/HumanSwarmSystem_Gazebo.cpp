@@ -6,7 +6,7 @@
 //----------socket----------
 #include <WinSock2.h>	//do not put behind <Windows.h>
 #pragma comment(lib,"ws2_32.lib") //Winsock Library
-#define SERVER "192.168.19.43"
+#define SERVER "192.168.19.47"
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
 #define SAMPLING_TIME 0.1	//unit:second
@@ -107,22 +107,23 @@ int _tmain(int argc, _TCHAR* argv[])
 	vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
 	k_t = diagmat(vk_t);
 	
-/*	
-	vk_p << 0.001 << 0.001 << 0.001 << 0.0005 << 0.0005 << 0.0005;
+	/*
+	vk_p << 0.000125 << 0.000125 << 0.000125 << 0.000075 << 0.000075 << 0.000075;
 	k_p = diagmat(vk_p);
-	vk_d << 0.0125 << 0.0125 << 0.0125 << 0.001 << 0.001 << 0.001;
+	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	k_d = diagmat(vk_d);
-	vk_t << 0.2 << 0.2 << 0.2 << 1 << 1 << 1;
+	vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
 	k_t = diagmat(vk_t);
-*/	
-/*
-	vk_p << 1 << 1 << 1 << 1 << 1 << 1;
+	*/
+	/*
+	vk_p << 0.0001 << 0.0001 << 0.0001 << 0.00005 << 0.00005 << 0.00005;
 	k_p = diagmat(vk_p);
-	vk_d << 1 << 1 << 1 << 1 << 1 << 1;
+	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	k_d = diagmat(vk_d);
-	vk_t << 1 << 1 << 1 << 1 << 1 << 1;
+	vk_t << 0.02 << 0.02 << 0.02 << 0.1 << 0.1 << 0.1;
 	k_t = diagmat(vk_t);
-*/
+	*/
+
 	//	---socket---
 	struct sockaddr_in si_other;
 	int s, slen = sizeof(si_other);
@@ -326,12 +327,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		eDot_s = timeDerivative(e_s_last, e_s);
 		e_s.t().print("e_s");
 		//J_m = ;
-
-
-		//	uncomment to fix variance
-		e_s(3, 0) = 0.0;
-		e_s(4, 0) = 0.0;
-		e_s(5, 0) = 0.0;
+		
 
 		mat SlaveAveragePosition(RobotDOF, 1, fill::zeros);
 		for (int axis = 0; axis < RobotDOF; axis++)
@@ -423,7 +419,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		VelocityCommand_s = VelocityCommand_s + u_s * SAMPLING_TIME;	//integrate
 		}
 		//	velocity saturation
-/*
+
 		for (int i = 0; i < RobotNum * RobotDOF; i++)
 		{
 			if (abs(VelocityCommand_s(i, 0)) > 10.0)
@@ -431,7 +427,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			if (abs(VelocityCommand_s(i, 0)) < 0.001)
 				VelocityCommand_s(i, 0) = 0.0;
 		}
-*/
+
 		/* 
 		 * part3:send command to robots
 		 */

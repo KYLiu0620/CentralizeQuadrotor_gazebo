@@ -9,7 +9,7 @@
 #define SERVER "192.168.19.47"
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
-#define SAMPLING_TIME 0.1	//unit:second
+#define SAMPLING_TIME 0.01	//unit:second
 
 //----------omni----------
 #include <HD\hd.h>
@@ -53,6 +53,7 @@ mat e_s_last(TaskSpaceDimension, 1, fill::zeros);
 mat eDot_s( TaskSpaceDimension, 1, fill::zeros );
 mat s_m( RobotNum * RobotDOF, 1, fill::zeros );
 mat s_s( RobotNum * RobotDOF, 1, fill::zeros );
+mat s_s_last(RobotNum * RobotDOF, 1, fill::zeros);
 mat q_m(TaskSpaceDimension, 1, fill::zeros);
 mat q_m_last(TaskSpaceDimension, 1, fill::zeros);
 mat qDot_m(TaskSpaceDimension, 1, fill::zeros);
@@ -233,6 +234,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		X_m_last = X_m;
 		X_s_last = X_s;
 		e_s_last = e_s;
+		s_s_last = s_s;
 
 		//	receive from master and then update X_m_temp
 		if (!hdWaitForCompletion(Scheduler_GetCmd1, HD_WAIT_CHECK_STATUS) || !hdWaitForCompletion(Scheduler_GetCmd2, HD_WAIT_CHECK_STATUS))
@@ -409,7 +411,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		JDot_s = timeDerivative(J_s_last, J_s);
 		s_m = -inv(J_m) * k_t * e_m + qDot_m;
 		s_s = -pinvJ_s * k_t * e_s + qDot_s - ( eye( RobotNum * RobotDOF, RobotNum * RobotDOF ) - pinvJ_s * J_s ) * f_a;
-		Y_s = pinv(JDot_s, MatElementTolerence) * k_t * e_s + pinvJ_s * k_t * eDot_s + qDoubleDot_s;
+		//Y_s = pinv(JDot_s, MatElementTolerence) * k_t * e_s + pinvJ_s * k_t * eDot_s + qDoubleDot_s;
+		Y_s = timeDerivative(s_s_last, s_s);
 		thetaHatDot_s = -1 * diagmat(Y_s).t() * s_s;
 		if (loopCount >= 5)
 		{		

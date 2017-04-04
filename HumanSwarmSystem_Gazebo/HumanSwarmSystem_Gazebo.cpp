@@ -9,7 +9,7 @@
 #define SERVER "192.168.19.47"
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
-#define SAMPLING_TIME 0.01	//unit:second
+#define SAMPLING_TIME 0.1	//unit:second
 
 //----------omni----------
 #include <HD\hd.h>
@@ -37,7 +37,7 @@ using namespace arma;
 const int RobotNum = 4;				//n
 const int TaskSpaceDimension = 6;	//m
 const int RobotDOF = 3;				//phi
-const double alpha = 0.1;			//work envolope scaling factor
+const double alpha = 0.2;			//work envolope scaling factor
 const double MatElementTolerence = 0.00001;	//when using inv,pinv, the consequence less than this will equal to zero
 mat X_m( TaskSpaceDimension, 1, fill::zeros );
 mat X_m_last(TaskSpaceDimension, 1, fill::zeros);
@@ -80,11 +80,15 @@ vec vk_p, vk_d, vk_t;
 mat k_p, k_d, k_t;
 double k_ss = 7.5 * 0.05;
 
-HHD DeviceID_1, DeviceID_2;
+HHD DeviceID_1, DeviceID_2;/*
 mat OmniBuf1(TaskSpaceDimension / 2, 3, fill::zeros);
 mat OmniBuf2(TaskSpaceDimension / 2, 3, fill::zeros);
 int OmniBufFlag1 = 0;
-int OmniBufFlag2 = 0;
+int OmniBufFlag2 = 0;*/
+mat X_mFilterBuf(TaskSpaceDimension, 3, fill::zeros);
+int X_mFilterBufFlag = 0;
+mat X_sFilterBuf(TaskSpaceDimension, 3, fill::zeros);
+int X_sFilterBufFlag = 0;
 
 double l_1_Omni = 133.0, l_2_Omni = 133.0;
 //--------function--------
@@ -92,7 +96,7 @@ mat timeDerivative(mat last, mat now);
 vec medianFilter(mat* dataBuf, mat* newData, int* BufFlag);
 HDCallbackCode HDCALLBACK GetCmd1Callback(void *data);
 HDCallbackCode HDCALLBACK GetCmd2Callback(void *data);
-
+void printToTxt(FILE *dst, mat *src);
 //-----------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
@@ -100,22 +104,23 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	//--------initialize--------
 	thetaHat_s.fill( 0.15 );
-	
+	/*
 	vk_p << 0.0000125 << 0.0000125 << 0.0000125 << 0.0000075 << 0.0000075 << 0.0000075;
 	k_p = diagmat(vk_p);
 	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	k_d = diagmat(vk_d);
 	vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
 	k_t = diagmat(vk_t);
+	*/
 	
-	/*
+	
 	vk_p << 0.000125 << 0.000125 << 0.000125 << 0.000075 << 0.000075 << 0.000075;
 	k_p = diagmat(vk_p);
 	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	k_d = diagmat(vk_d);
 	vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
 	k_t = diagmat(vk_t);
-	*/
+	
 	/*
 	vk_p << 0.0001 << 0.0001 << 0.0001 << 0.00005 << 0.00005 << 0.00005;
 	k_p = diagmat(vk_p);
@@ -212,6 +217,14 @@ int _tmain(int argc, _TCHAR* argv[])
 		printf("sendto() failed with error code : %d", WSAGetLastError());
 		exit(EXIT_FAILURE);
 	}
+
+	//	open txt file for recording
+	FILE* X_m_file = fopen("..\\record\\X_m.txt", "w");
+	FILE* X_s_file = fopen("..\\record\\X_s.txt", "w");
+	FILE* q_s_file = fopen("..\\record\\q_s.txt", "w");
+	FILE* qDot_s_file = fopen("..\\record\\qDot_s.txt", "w");
+	FILE* u_s_file = fopen("..\\record\\u_s.txt", "w");
+	FILE* e_s_file = fopen("..\\record\\e_s.txt", "w");
 	//--------start--------
 	int loopCount = 0;
 	while (!_kbhit())
@@ -297,16 +310,38 @@ int _tmain(int argc, _TCHAR* argv[])
 		if (abs(X_m - X_m_last).max() < 0.01)
 			X_m = X_m_last;
 
-
-
 		if (loopCount < 2)
 		{
 			X_m_initial = X_m;
-			X_s_initial = X_s;
+			X_s_initial = X_s;/*
+			X_mFilterBuf.col(X_mFilterBufFlag) = X_m;
+			X_mFilterBufFlag++;
+			X_sFilterBuf.col(X_sFilterBufFlag) = X_s;
+			X_sFilterBufFlag++;
 		}
+		else
+		{
+			X_m = medianFilter(&X_mFilterBuf, &X_m, &X_mFilterBufFlag);
+			X_s = medianFilter(&X_sFilterBuf, &X_s, &X_sFilterBufFlag);*/
+		}
+
+		//solve problem: When X_m is negtive over, slaves diverge due to variance command
+		for (int axis = 0; axis < TaskSpaceDimension / 2; axis++)
+		{
+			if (X_s(axis + TaskSpaceDimension / 2, 0) < 1 &&
+				X_m(axis + TaskSpaceDimension / 2, 0) < (X_m_initial(axis + TaskSpaceDimension / 2, 0) + X_m_last(axis + TaskSpaceDimension / 2, 0)))
+			{
+				X_m(axis + TaskSpaceDimension / 2, 0) = X_m_last(axis + TaskSpaceDimension / 2, 0) + X_m_initial(axis + TaskSpaceDimension / 2, 0);
+			}
+		}
+
+		//
 		X_m -= X_m_initial;
 		X_s -= X_s_initial;
 		
+		printToTxt(X_m_file, &X_m);
+		printToTxt(X_s_file, &X_s);
+		printToTxt(q_s_file, &q_s);
 		/*
 		X_m.t().print("X_m:");
 		X_s.t().print("X_s:");
@@ -319,7 +354,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			qDot_s = timeDerivative(q_s_last, q_s);
 			qDoubleDot_s = timeDerivative(qDot_s_last, qDot_s);
 		}
-
+		printToTxt(qDot_s_file, &q_s);
 		/* 
 		 * part2:update other parameters
 		 */		
@@ -329,7 +364,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		eDot_s = timeDerivative(e_s_last, e_s);
 		e_s.t().print("e_s");
 		//J_m = ;
-		
+		printToTxt(e_s_file, &e_s);
 
 		mat SlaveAveragePosition(RobotDOF, 1, fill::zeros);
 		for (int axis = 0; axis < RobotDOF; axis++)
@@ -406,23 +441,25 @@ int _tmain(int argc, _TCHAR* argv[])
 		//	collision avoidance
 		mat CollisionAvoidancef_a(RobotDOF*RobotNum, 1, fill::zeros);
 
-		f_a = -InnerDistancef_a * 0.0 -CollisionAvoidancef_a * 0.0;
+		f_a = -InnerDistancef_a * 10.0 -CollisionAvoidancef_a * 0.0;
 		
 		JDot_s = timeDerivative(J_s_last, J_s);
 		s_m = -inv(J_m) * k_t * e_m + qDot_m;
 		s_s = -pinvJ_s * k_t * e_s + qDot_s - ( eye( RobotNum * RobotDOF, RobotNum * RobotDOF ) - pinvJ_s * J_s ) * f_a;
 		//Y_s = pinv(JDot_s, MatElementTolerence) * k_t * e_s + pinvJ_s * k_t * eDot_s + qDoubleDot_s;
-		Y_s = timeDerivative(s_s_last, s_s);
-		thetaHatDot_s = -1 * diagmat(Y_s).t() * s_s;
+		//Y_s = timeDerivative(s_s_last, s_s);
+		//thetaHatDot_s = -1 * diagmat(Y_s).t() * s_s;
 		if (loopCount >= 5)
-		{		
-		thetaHat_s += thetaHatDot_s * SAMPLING_TIME;
+		{
+		//thetaHat_s += thetaHatDot_s * SAMPLING_TIME;
 		//u_m = ;
-		u_s = diagmat(Y_s) * thetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
+		//u_s = diagmat(Y_s) * thetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
+		u_s = (qDoubleDot_s - timeDerivative(s_s_last, s_s)) - k_ss * s_s - trans(J_s) * k_p * J_s * s_s;
 		VelocityCommand_s = VelocityCommand_s + u_s * SAMPLING_TIME;	//integrate
 		}
-		//	velocity saturation
+		printToTxt(u_s_file, &u_s);
 
+		//	velocity saturation
 		for (int i = 0; i < RobotNum * RobotDOF; i++)
 		{
 			if (abs(VelocityCommand_s(i, 0)) > 10.0)
@@ -473,13 +510,14 @@ int _tmain(int argc, _TCHAR* argv[])
 		GetLocalTime(&LoopEnd);
 		int ThisLoopTimeMillisecond = ((LoopEnd.wMinute - LoopStart.wMinute) * 60 + (LoopEnd.wSecond - LoopStart.wSecond)) * 1000 + (LoopEnd.wMilliseconds - LoopStart.wMilliseconds);
 		int SleepMillisecond = SAMPLING_TIME * 1000 - ThisLoopTimeMillisecond;
+		//cout << "sleep:" << SleepMillisecond << endl;
 		if (SleepMillisecond > 0)	//make sure the case loop time is not greater than sampling time
 			Sleep(SleepMillisecond);
 		
 		
 	}
 
-	//--------end--------
+	//--------end--------	
 	hdStopScheduler();
 	hdUnschedule(Scheduler_GetCmd1);
 	hdUnschedule(Scheduler_GetCmd2);
@@ -487,6 +525,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	hdDisableDevice(DeviceID_2);
 	closesocket(s);
 	WSACleanup();
+	_fcloseall();
 
 	system("PAUSE");
 	return 0;
@@ -548,3 +587,13 @@ vec medianFilter(mat* dataBuf, mat* newData, int* BufFlag)
 	return result;
 }
 
+void printToTxt(FILE *dst, mat *src)
+{
+	for (int i = 0; i < src->n_rows; i++)
+	{
+		fprintf(dst, "%f", src->at(i,0));
+		if (i != src->n_rows - 1)
+			fprintf(dst, " ");
+	}
+	fprintf(dst, "\n");
+}

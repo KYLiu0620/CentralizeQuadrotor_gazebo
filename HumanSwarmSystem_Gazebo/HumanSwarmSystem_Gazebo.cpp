@@ -104,22 +104,24 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	//--------initialize--------
 	thetaHat_s.fill( 0.15 );
-	/*
+	
 	vk_p << 0.0000125 << 0.0000125 << 0.0000125 << 0.0000075 << 0.0000075 << 0.0000075;
 	k_p = diagmat(vk_p);
 	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	k_d = diagmat(vk_d);
 	vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
 	k_t = diagmat(vk_t);
-	*/
 	
 	
+	/*
 	vk_p << 0.000125 << 0.000125 << 0.000125 << 0.000075 << 0.000075 << 0.000075;
 	k_p = diagmat(vk_p);
 	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	k_d = diagmat(vk_d);
-	vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
-	k_t = diagmat(vk_t);
+	vk_t << 0.1 << 0.05 << 0.1 << 1 << 0.5 << 1;
+	//vk_t << 0.05 << 0.05 << 0.05 << 0.5 << 0.5 << 0.5;
+	//vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
+	k_t = diagmat(vk_t); */
 	
 	/*
 	vk_p << 0.0001 << 0.0001 << 0.0001 << 0.00005 << 0.00005 << 0.00005;
@@ -301,20 +303,21 @@ int _tmain(int argc, _TCHAR* argv[])
 			X_s(axis + TaskSpaceDimension / 2, 0) = VarSum / (double)RobotNum;
 		}
 
-		//	update X_m & filter
+		//	update X_m
 		X_m = X_m_temp;	//don't put this just after hdWaitForCompletion,
 						//or the callback could not be completed yet
 						//and the value might be changed unexpected
-
+		/*
 		//filter q_s
-		if (abs(X_m - X_m_last).max() < 0.01)
-			X_m = X_m_last;
+		if (abs(X_s - X_s_last).max() < 0.01)
+			X_s = X_s_last;*/
 
 		if (loopCount < 2)
 		{
 			X_m_initial = X_m;
-			X_s_initial = X_s;/*
-			X_mFilterBuf.col(X_mFilterBufFlag) = X_m;
+			X_s_initial = X_s;
+			//median filter
+			/*X_mFilterBuf.col(X_mFilterBufFlag) = X_m;
 			X_mFilterBufFlag++;
 			X_sFilterBuf.col(X_sFilterBufFlag) = X_s;
 			X_sFilterBufFlag++;
@@ -324,7 +327,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			X_m = medianFilter(&X_mFilterBuf, &X_m, &X_mFilterBufFlag);
 			X_s = medianFilter(&X_sFilterBuf, &X_s, &X_sFilterBufFlag);*/
 		}
-
+		/*
 		//solve problem: When X_m is negtive over, slaves diverge due to variance command
 		for (int axis = 0; axis < TaskSpaceDimension / 2; axis++)
 		{
@@ -333,7 +336,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			{
 				X_m(axis + TaskSpaceDimension / 2, 0) = X_m_last(axis + TaskSpaceDimension / 2, 0) + X_m_initial(axis + TaskSpaceDimension / 2, 0);
 			}
-		}
+		}*/
 
 		//
 		X_m -= X_m_initial;
@@ -354,7 +357,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			qDot_s = timeDerivative(q_s_last, q_s);
 			qDoubleDot_s = timeDerivative(qDot_s_last, qDot_s);
 		}
-		printToTxt(qDot_s_file, &q_s);
+		printToTxt(qDot_s_file, &qDot_s);
 		/* 
 		 * part2:update other parameters
 		 */		
@@ -455,10 +458,21 @@ int _tmain(int argc, _TCHAR* argv[])
 		//u_m = ;
 		//u_s = diagmat(Y_s) * thetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
 		u_s = (qDoubleDot_s - timeDerivative(s_s_last, s_s)) - k_ss * s_s - trans(J_s) * k_p * J_s * s_s;
+		//u saturation
+		for (int i = 0; i < u_s.n_rows; i++)
+		{
+			if (abs(u_s(i, 0)) > 10.0)
+			{
+				if (u_s(i, 0) > 0)
+					u_s(i, 0) = 10.0;
+				else
+					u_s(i, 0) = -10.0;
+			}
+		}
 		VelocityCommand_s = VelocityCommand_s + u_s * SAMPLING_TIME;	//integrate
 		}
 		printToTxt(u_s_file, &u_s);
-
+		/*
 		//	velocity saturation
 		for (int i = 0; i < RobotNum * RobotDOF; i++)
 		{
@@ -466,7 +480,7 @@ int _tmain(int argc, _TCHAR* argv[])
 				VelocityCommand_s(i, 0) = 10.0;
 			if (abs(VelocityCommand_s(i, 0)) < 0.001)
 				VelocityCommand_s(i, 0) = 0.0;
-		}
+		}*/
 
 		/* 
 		 * part3:send command to robots
@@ -527,7 +541,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	WSACleanup();
 	_fcloseall();
 
-	system("PAUSE");
+	//system("PAUSE");
 	return 0;
 }
 

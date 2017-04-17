@@ -6,7 +6,7 @@
 //----------socket----------
 #include <WinSock2.h>	//do not put behind <Windows.h>
 #pragma comment(lib,"ws2_32.lib") //Winsock Library
-#define SERVER "192.168.19.47"
+#define SERVER "192.168.19.62"
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
 #define SAMPLING_TIME 0.1	//unit:second
@@ -34,10 +34,11 @@ using namespace std;
 using namespace arma;
 
 //--------global parameter--------
-const int RobotNum = 4;				//n
+const int SlaveRobotNum = 4;		//n
+const int SlaveRobotDOF = 3;		//phi
 const int TaskSpaceDimension = 6;	//m
-const int RobotDOF = 3;				//phi
-const double alpha = 0.2;			//work envolope scaling factor
+const int TaskSpace_variance = TaskSpaceDimension / 2;
+//const double alpha = 0.2;			//work envolope scaling factor
 const double MatElementTolerence = 0.00001;	//when using inv,pinv, the consequence less than this will equal to zero
 mat X_m( TaskSpaceDimension, 1, fill::zeros );
 mat X_m_last(TaskSpaceDimension, 1, fill::zeros);
@@ -51,38 +52,38 @@ mat e_m( TaskSpaceDimension, 1, fill::zeros );
 mat e_s( TaskSpaceDimension, 1, fill::zeros );
 mat e_s_last(TaskSpaceDimension, 1, fill::zeros);
 mat eDot_s( TaskSpaceDimension, 1, fill::zeros );
-mat s_m( RobotNum * RobotDOF, 1, fill::zeros );
-mat s_s( RobotNum * RobotDOF, 1, fill::zeros );
-mat s_s_last(RobotNum * RobotDOF, 1, fill::zeros);
+mat s_m( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
+mat s_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
+mat s_s_last(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat q_m(TaskSpaceDimension, 1, fill::zeros);
 mat q_m_last(TaskSpaceDimension, 1, fill::zeros);
 mat qDot_m(TaskSpaceDimension, 1, fill::zeros);
-mat q_s( RobotNum * RobotDOF, 1, fill::zeros );
-mat q_s_last(RobotNum * RobotDOF, 1, fill::zeros);
-mat qDot_s( RobotNum * RobotDOF, 1, fill::zeros );
-mat qDot_s_last(RobotNum * RobotDOF, 1, fill::zeros);
-mat qDoubleDot_s(RobotNum * RobotDOF, 1, fill::zeros);
+mat q_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
+mat q_s_last(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
+mat qDot_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
+mat qDot_s_last(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
+mat qDoubleDot_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat J_m( TaskSpaceDimension, TaskSpaceDimension, fill::eye );
-mat J_s( TaskSpaceDimension, RobotNum * RobotDOF, fill::zeros );
-mat J_s_last(TaskSpaceDimension, RobotNum * RobotDOF, fill::zeros);
-mat JDot_s(TaskSpaceDimension, RobotNum * RobotDOF, fill::zeros);
+mat J_s( TaskSpaceDimension, SlaveRobotNum * SlaveRobotDOF, fill::zeros );
+mat J_s_last(TaskSpaceDimension, SlaveRobotNum * SlaveRobotDOF, fill::zeros);
+mat JDot_s(TaskSpaceDimension, SlaveRobotNum * SlaveRobotDOF, fill::zeros);
 mat invJ_m, pinvJ_s;
 mat Y_s;
-mat thetaHat_s( RobotNum * RobotDOF, 1 );
-mat thetaHatDot_s(RobotNum * RobotDOF, 1, fill::zeros);
-mat f_a( RobotNum * RobotDOF, 1, fill::zeros );
+mat thetaHat_s( SlaveRobotNum * SlaveRobotDOF, 1 );
+mat thetaHatDot_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
+mat f_a( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat u_m;
-mat u_s( RobotNum * RobotDOF, 1, fill::zeros );
+mat u_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 
-mat VelocityCommand_s(RobotNum * RobotDOF, 1, fill::zeros);
+mat VelocityCommand_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 
-vec vk_p, vk_d, vk_t;
-mat k_p, k_d, k_t;
+vec vk_p, vk_d, vk_t, valpha;
+mat k_p, k_d, k_t, alpha;
 double k_ss = 7.5 * 0.05;
 
 HHD DeviceID_1, DeviceID_2;/*
-mat OmniBuf1(TaskSpaceDimension / 2, 3, fill::zeros);
-mat OmniBuf2(TaskSpaceDimension / 2, 3, fill::zeros);
+mat OmniBuf1(TaskSpace_variance, 3, fill::zeros);
+mat OmniBuf2(TaskSpace_variance, 3, fill::zeros);
 int OmniBufFlag1 = 0;
 int OmniBufFlag2 = 0;*/
 mat X_mFilterBuf(TaskSpaceDimension, 3, fill::zeros);
@@ -104,33 +105,26 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	//--------initialize--------
 	thetaHat_s.fill( 0.15 );
-	
+	valpha << 0.2 << 0.2 << 0.2 << 0.2 << 0.2 << 0.2;
+	alpha = diagmat(valpha);
+
+	/*
 	vk_p << 0.0000125 << 0.0000125 << 0.0000125 << 0.0000075 << 0.0000075 << 0.0000075;
 	k_p = diagmat(vk_p);
 	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	k_d = diagmat(vk_d);
 	vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
-	k_t = diagmat(vk_t);
+	k_t = diagmat(vk_t);*/
 	
 	
-	/*
 	vk_p << 0.000125 << 0.000125 << 0.000125 << 0.000075 << 0.000075 << 0.000075;
 	k_p = diagmat(vk_p);
-	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
-	k_d = diagmat(vk_d);
-	vk_t << 0.1 << 0.05 << 0.1 << 1 << 0.5 << 1;
+	//vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
+	//k_d = diagmat(vk_d);
+	vk_t << 0.2 << 0.2 << 0.2 << 1 << 1 << 1;
 	//vk_t << 0.05 << 0.05 << 0.05 << 0.5 << 0.5 << 0.5;
 	//vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
-	k_t = diagmat(vk_t); */
-	
-	/*
-	vk_p << 0.0001 << 0.0001 << 0.0001 << 0.00005 << 0.00005 << 0.00005;
-	k_p = diagmat(vk_p);
-	vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
-	k_d = diagmat(vk_d);
-	vk_t << 0.02 << 0.02 << 0.02 << 0.1 << 0.1 << 0.1;
-	k_t = diagmat(vk_t);
-	*/
+	k_t = diagmat(vk_t); 
 
 	//	---socket---
 	struct sockaddr_in si_other;
@@ -211,7 +205,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	
 	//	use sendto() before using recvfrom() to implicitly bind
 	stringstream ssFirstSend;
-	for (int i = 0; i < RobotDOF * RobotNum; i++)
+	for (int i = 0; i < SlaveRobotDOF * SlaveRobotNum; i++)
 		ssFirstSend << "0 ";
 	string sFirstSend = ssFirstSend.str();
 	if (sendto(s, sFirstSend.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
@@ -269,11 +263,11 @@ int _tmain(int argc, _TCHAR* argv[])
 		//puts(buf_from_slave);
 
 		ss_from_slave << buf_from_slave;
-		for (int num = 0; num < RobotNum; num++)
+		for (int num = 0; num < SlaveRobotNum; num++)
 		{
-			for (int axis = 0; axis < RobotDOF; axis++)
+			for (int axis = 0; axis < SlaveRobotDOF; axis++)
 			{
-				ss_from_slave >> q_s(num * RobotDOF + axis, 0);
+				ss_from_slave >> q_s(num * SlaveRobotDOF + axis, 0);
 			}
 		}
 		
@@ -289,18 +283,18 @@ int _tmain(int argc, _TCHAR* argv[])
 		for (int axis = 0; axis < 3; axis++)
 		{
 			double PosSum = 0.0;
-			for (int num = 0; num < RobotNum; num++)
+			for (int num = 0; num < SlaveRobotNum; num++)
 			{
-				PosSum += q_s(num * RobotDOF + axis, 0);
+				PosSum += q_s(num * SlaveRobotDOF + axis, 0);
 			}
-			X_s(axis, 0) = PosSum / (double)RobotNum;
+			X_s(axis, 0) = PosSum / (double)SlaveRobotNum;
 
 			double VarSum = 0.0;
-			for (int num = 0; num < RobotNum; num++)
+			for (int num = 0; num < SlaveRobotNum; num++)
 			{
-				VarSum += pow(q_s(num * RobotDOF + axis, 0) - X_s(axis, 0), 2);
+				VarSum += pow(q_s(num * SlaveRobotDOF + axis, 0) - X_s(axis, 0), 2);
 			}
-			X_s(axis + TaskSpaceDimension / 2, 0) = VarSum / (double)RobotNum;
+			X_s(axis + TaskSpace_variance, 0) = VarSum / (double)SlaveRobotNum;
 		}
 
 		//	update X_m
@@ -329,18 +323,33 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 		/*
 		//solve problem: When X_m is negtive over, slaves diverge due to variance command
-		for (int axis = 0; axis < TaskSpaceDimension / 2; axis++)
+		for (int axis = 0; axis < TaskSpace_variance; axis++)
 		{
-			if (X_s(axis + TaskSpaceDimension / 2, 0) < 1 &&
-				X_m(axis + TaskSpaceDimension / 2, 0) < (X_m_initial(axis + TaskSpaceDimension / 2, 0) + X_m_last(axis + TaskSpaceDimension / 2, 0)))
+			if (X_s(axis + TaskSpace_variance, 0) < 1 &&
+				X_m(axis + TaskSpace_variance, 0) < (X_m_initial(axis + TaskSpace_variance, 0) + X_m_last(axis + TaskSpace_variance, 0)))
 			{
-				X_m(axis + TaskSpaceDimension / 2, 0) = X_m_last(axis + TaskSpaceDimension / 2, 0) + X_m_initial(axis + TaskSpaceDimension / 2, 0);
+				X_m(axis + TaskSpace_variance, 0) = X_m_last(axis + TaskSpace_variance, 0) + X_m_initial(axis + TaskSpace_variance, 0);
 			}
 		}*/
-
-		//
-		X_m -= X_m_initial;
-		X_s -= X_s_initial;
+		/*
+		for (int axis = 0; axis < TaskSpace_variance; axis++)
+		{
+			if (alpha(axis + TaskSpace_variance, axis + TaskSpace_variance) * (X_m_initial(axis + TaskSpace_variance, 0) - X_m(axis + TaskSpace_variance, 0))
+					> X_s_initial(axis + TaskSpace_variance, 0))
+			{
+				X_m(axis + TaskSpace_variance, 0) = 0.0;
+			}
+		}*/
+		//shift
+		X_m = X_m - X_m_initial + inv(alpha) * X_s_initial;
+		for (int axis = 0; axis < SlaveRobotDOF; axis++)
+		{
+			if (X_m(axis + TaskSpace_variance, 0) < 0.0)
+			{
+				X_m(axis + TaskSpace_variance, 0) = 0.0;
+			}
+		}
+		//X_s -= X_s_initial;
 		
 		printToTxt(X_m_file, &X_m);
 		printToTxt(X_s_file, &X_s);
@@ -361,22 +370,22 @@ int _tmain(int argc, _TCHAR* argv[])
 		/* 
 		 * part2:update other parameters
 		 */		
-		e_m = X_s / alpha - X_m;
-		e_s = X_m * alpha - X_s;
+		e_m = inv(alpha) *  X_s  - X_m;
+		e_s = alpha * X_m  - X_s;
 
 		eDot_s = timeDerivative(e_s_last, e_s);
 		e_s.t().print("e_s");
 		//J_m = ;
 		printToTxt(e_s_file, &e_s);
 
-		mat SlaveAveragePosition(RobotDOF, 1, fill::zeros);
-		for (int axis = 0; axis < RobotDOF; axis++)
+		mat SlaveAveragePosition(SlaveRobotDOF, 1, fill::zeros);
+		for (int axis = 0; axis < SlaveRobotDOF; axis++)
 		{
-			for (int num = 0; num < RobotNum; num++)
+			for (int num = 0; num < SlaveRobotNum; num++)
 			{
-				SlaveAveragePosition(axis,0) += q_s(axis + num * RobotDOF,0);
+				SlaveAveragePosition(axis,0) += q_s(axis + num * SlaveRobotDOF,0);
 			}
-			SlaveAveragePosition(axis,0) /= (double)RobotNum;
+			SlaveAveragePosition(axis,0) /= (double)SlaveRobotNum;
 		}
 
 		//	primary task
@@ -388,9 +397,9 @@ int _tmain(int argc, _TCHAR* argv[])
 			//	0	0	1/n	...
 			if (row < 3)
 			{
-				for (int col = 0; col < RobotNum; col++)
+				for (int col = 0; col < SlaveRobotNum; col++)
 				{
-					J_s(row, col*RobotDOF + row % RobotDOF) = 1.0 / (double)RobotNum;
+					J_s(row, col*SlaveRobotDOF + row % SlaveRobotDOF) = 1.0 / (double)SlaveRobotNum;
 				}
 			}
 			//	variance
@@ -400,10 +409,10 @@ int _tmain(int argc, _TCHAR* argv[])
 			//	v_i = 2/(phi*n)*(q_si-avg_i), i=x,y,z
 			else
 			{
-				for (int col = 0; col < RobotNum; col++)
+				for (int col = 0; col < SlaveRobotNum; col++)
 				{
-					J_s(row, col*RobotDOF + row % RobotDOF) 
-						= 2 / (double)(/*RobotDOF**/RobotNum)*(q_s(col*RobotDOF + row % RobotDOF, 0) - SlaveAveragePosition(row % RobotDOF, 0));
+					J_s(row, col*SlaveRobotDOF + row % SlaveRobotDOF) 
+						= 2 / (double)(/*SlaveRobotDOF**/SlaveRobotNum)*(q_s(col*SlaveRobotDOF + row % SlaveRobotDOF, 0) - SlaveAveragePosition(row % SlaveRobotDOF, 0));
 				}
 			}
 		}
@@ -412,69 +421,79 @@ int _tmain(int argc, _TCHAR* argv[])
 		pinvJ_s = pinv( J_s, MatElementTolerence );
 		//	secondary task
 		//	maximize inner distance
-		mat InnerDistancef_a(RobotDOF*RobotNum, 1, fill::zeros);	//partial f_d(2.19)
-		mat Distance(RobotNum, RobotNum, fill::zeros);
-		for (int row = 0; row < RobotNum; row++)
+		mat InnerDistancef_a(SlaveRobotDOF*SlaveRobotNum, 1, fill::zeros);	//partial f_d(2.19)
+		mat Distance(SlaveRobotNum, SlaveRobotNum, fill::zeros);
+		for (int row = 0; row < SlaveRobotNum; row++)
 		{
-			for (int col = 0; col < RobotNum; col++)
+			for (int col = 0; col < SlaveRobotNum; col++)
 			{
-				for (int axis = 0; axis < RobotDOF; axis++)
+				for (int axis = 0; axis < SlaveRobotDOF; axis++)
 				{
 					if (row == col)break;
-					Distance(row, col) += pow(q_s(col*RobotDOF + axis, 0) - q_s(row*RobotDOF + axis, 0), 2);
+					Distance(row, col) += pow(q_s(col*SlaveRobotDOF + axis, 0) - q_s(row*SlaveRobotDOF + axis, 0), 2);
 				}
 				Distance(row, col) = sqrt(Distance(row, col));
 			}
 		}
-		for (int robot = 0; robot < RobotNum; robot++)
+		for (int robot = 0; robot < SlaveRobotNum; robot++)
 		{
-			for (int axis = 0; axis < RobotDOF; axis++)
+			for (int axis = 0; axis < SlaveRobotDOF; axis++)
 			{
-				for (int other = 0; other < RobotNum; other++)
+				for (int other = 0; other < SlaveRobotNum; other++)
 				{
 					if (robot != other)
 					{
-						InnerDistancef_a(robot*RobotDOF + axis, 0) 
-							+= (q_s(robot*RobotDOF + axis, 0) - q_s(other*RobotDOF + axis, 0)) / Distance(robot, other);
+						InnerDistancef_a(robot*SlaveRobotDOF + axis, 0) 
+							+= (q_s(robot*SlaveRobotDOF + axis, 0) - q_s(other*SlaveRobotDOF + axis, 0)) / Distance(robot, other);
 					}
 				}
 			}
 		}
-		InnerDistancef_a *= -2.0 / (double)(RobotNum*(RobotNum - 1));
+		InnerDistancef_a *= -2.0 / (double)(SlaveRobotNum*(SlaveRobotNum - 1));
 		//	collision avoidance
-		mat CollisionAvoidancef_a(RobotDOF*RobotNum, 1, fill::zeros);
+		mat CollisionAvoidancef_a(SlaveRobotDOF*SlaveRobotNum, 1, fill::zeros);
 
 		f_a = -InnerDistancef_a * 10.0 -CollisionAvoidancef_a * 0.0;
 		
 		JDot_s = timeDerivative(J_s_last, J_s);
 		s_m = -inv(J_m) * k_t * e_m + qDot_m;
-		s_s = -pinvJ_s * k_t * e_s + qDot_s - ( eye( RobotNum * RobotDOF, RobotNum * RobotDOF ) - pinvJ_s * J_s ) * f_a;
+		s_s = -pinvJ_s * k_t * e_s + qDot_s - ( eye( SlaveRobotNum * SlaveRobotDOF, SlaveRobotNum * SlaveRobotDOF ) - pinvJ_s * J_s ) * f_a;
 		//Y_s = pinv(JDot_s, MatElementTolerence) * k_t * e_s + pinvJ_s * k_t * eDot_s + qDoubleDot_s;
 		//Y_s = timeDerivative(s_s_last, s_s);
 		//thetaHatDot_s = -1 * diagmat(Y_s).t() * s_s;
 		if (loopCount >= 5)
 		{
-		//thetaHat_s += thetaHatDot_s * SAMPLING_TIME;
-		//u_m = ;
-		//u_s = diagmat(Y_s) * thetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
-		u_s = (qDoubleDot_s - timeDerivative(s_s_last, s_s)) - k_ss * s_s - trans(J_s) * k_p * J_s * s_s;
-		//u saturation
-		for (int i = 0; i < u_s.n_rows; i++)
-		{
+			//thetaHat_s += thetaHatDot_s * SAMPLING_TIME;
+			//u_m = ;
+			//u_s = diagmat(Y_s) * thetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
+			u_s = (qDoubleDot_s - timeDerivative(s_s_last, s_s)) - k_ss * s_s - trans(J_s) * k_p * J_s * s_s;
+
+			//u saturation
+			/*
+			for (int i = 0; i < u_s.n_rows; i++)
+			{
 			if (abs(u_s(i, 0)) > 10.0)
 			{
-				if (u_s(i, 0) > 0)
-					u_s(i, 0) = 10.0;
-				else
-					u_s(i, 0) = -10.0;
+			if (u_s(i, 0) > 0)
+			u_s(i, 0) = 10.0;
+			else
+			u_s(i, 0) = -10.0;
 			}
+			}*/
+			VelocityCommand_s = VelocityCommand_s + u_s * SAMPLING_TIME;	//integrate
 		}
-		VelocityCommand_s = VelocityCommand_s + u_s * SAMPLING_TIME;	//integrate
+		
+		for (int i = 0; i < VelocityCommand_s.n_rows; i++)
+		{
+			if (abs(VelocityCommand_s(i, 0)) < 0.00001)
+				VelocityCommand_s(i, 0) = 0.0;
 		}
+
+
 		printToTxt(u_s_file, &u_s);
 		/*
 		//	velocity saturation
-		for (int i = 0; i < RobotNum * RobotDOF; i++)
+		for (int i = 0; i < SlaveRobotNum * SlaveRobotDOF; i++)
 		{
 			if (abs(VelocityCommand_s(i, 0)) > 10.0)
 				VelocityCommand_s(i, 0) = 10.0;
@@ -500,11 +519,11 @@ int _tmain(int argc, _TCHAR* argv[])
 		//	to slave
 		stringstream ss_to_s;
 		string s_to_s;
-		for (int num = 0; num < RobotNum; num++)
+		for (int num = 0; num < SlaveRobotNum; num++)
 		{
-			for (int axis = 0; axis < RobotDOF; axis++)
+			for (int axis = 0; axis < SlaveRobotDOF; axis++)
 			{
-				ss_to_s << VelocityCommand_s(num * RobotDOF + axis, 0) << " ";	
+				ss_to_s << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";	
 			}
 		}
 		s_to_s = ss_to_s.str();
@@ -541,7 +560,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	WSACleanup();
 	_fcloseall();
 
-	//system("PAUSE");
+	system("PAUSE");
 	return 0;
 }
 
@@ -553,12 +572,12 @@ mat timeDerivative(mat last, mat now)
 
 HDCallbackCode HDCALLBACK GetCmd1Callback(void *data)
 {
-	HDdouble command[TaskSpaceDimension / 2];
+	HDdouble command[TaskSpace_variance];
 
 	//	read command from omni
 	hdBeginFrame(DeviceID_1);
 	hdGetDoublev(HD_CURRENT_POSITION, command);
-	for (int axis = 0; axis < TaskSpaceDimension / 2; axis++)
+	for (int axis = 0; axis < TaskSpace_variance; axis++)
 	{
 		X_m_temp(axis, 0) = command[axis];
 	}
@@ -569,12 +588,12 @@ HDCallbackCode HDCALLBACK GetCmd1Callback(void *data)
 
 HDCallbackCode HDCALLBACK GetCmd2Callback(void *data)
 {
-	HDdouble command[TaskSpaceDimension / 2];
+	HDdouble command[TaskSpace_variance];
 
 	//	read command from omni
 	hdBeginFrame(DeviceID_2);
 	hdGetDoublev(HD_CURRENT_POSITION, command);
-	for (int axis = 0; axis < TaskSpaceDimension / 2; axis++)
+	for (int axis = 0; axis < TaskSpace_variance; axis++)
 	{
 		X_m_temp(3 + axis, 0) = command[axis];
 	}

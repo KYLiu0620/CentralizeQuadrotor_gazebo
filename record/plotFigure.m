@@ -5,8 +5,8 @@ SamplingTime = 0.1;
 TaskSpaceDimension = 6;
 fig_count = 1;
 DOF = 3;
-StartTime = 20;
-EndTime = 3700;
+StartTime = 1;
+EndTime = 1100;
 
 X_m = importdata('X_m.txt');
 X_s = importdata('X_s.txt');

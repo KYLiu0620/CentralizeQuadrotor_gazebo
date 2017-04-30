@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="TimeDelayBuffer">
+      <UniqueIdentifier>{a0f00b18-3ca6-47c9-89e8-8761fe019820}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Text Include="ReadMe.txt" />
@@ -24,6 +27,9 @@
     <ClInclude Include="targetver.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="..\TimeDelayBuffer\TimeDelayBuffer.h">
+      <Filter>TimeDelayBuffer</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -31,6 +37,9 @@
     </ClCompile>
     <ClCompile Include="HumanSwarmSystem_Gazebo.cpp">
       <Filter>原始程式檔</Filter>
+    </ClCompile>
+    <ClCompile Include="..\TimeDelayBuffer\TimeDelayBuffer.cpp">
+      <Filter>TimeDelayBuffer</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

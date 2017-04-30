@@ -1,15 +1,14 @@
 // HumanSwarmSystem_Gazebo.cpp : 定義主控台應用程式的進入點。
 //
 
-
 #include "stdafx.h"
 //----------socket----------
 #include <WinSock2.h>	//do not put behind <Windows.h>
 #pragma comment(lib,"ws2_32.lib") //Winsock Library
-#define SERVER "192.168.19.62"
+#define SERVER "192.168.19.73"
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
-#define SAMPLING_TIME 0.1	//unit:second
+#define SAMPLING_TIME 0.01	//unit:second
 
 //----------omni----------
 #include <HD\hd.h>
@@ -18,6 +17,7 @@
 #define DEVICE_NAME_1 "phantom1"
 #define DEVICE_NAME_2 "phantom2"
 
+#include <time.h>
 #include <Windows.h>// systemtime
 #include <iostream>
 #include <armadillo>// linear alegebra lib
@@ -29,6 +29,7 @@
 # include "conio.h"
 # include <windows.h>
 #endif
+#include "../TimeDelayBuffer/TimeDelayBuffer.h"
 
 using namespace std;
 using namespace arma;
@@ -38,6 +39,7 @@ const int SlaveRobotNum = 4;		//n
 const int SlaveRobotDOF = 3;		//phi
 const int TaskSpaceDimension = 6;	//m
 const int TaskSpace_variance = TaskSpaceDimension / 2;
+const double u_s_saturation = 7.0;
 //const double alpha = 0.2;			//work envolope scaling factor
 const double MatElementTolerence = 0.00001;	//when using inv,pinv, the consequence less than this will equal to zero
 mat X_m( TaskSpaceDimension, 1, fill::zeros );
@@ -124,7 +126,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	vk_t << 0.2 << 0.2 << 0.2 << 1 << 1 << 1;
 	//vk_t << 0.05 << 0.05 << 0.05 << 0.5 << 0.5 << 0.5;
 	//vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
-	k_t = diagmat(vk_t); 
+	k_t = diagmat(vk_t);
 
 	//	---socket---
 	struct sockaddr_in si_other;
@@ -221,6 +223,12 @@ int _tmain(int argc, _TCHAR* argv[])
 	FILE* qDot_s_file = fopen("..\\record\\qDot_s.txt", "w");
 	FILE* u_s_file = fopen("..\\record\\u_s.txt", "w");
 	FILE* e_s_file = fopen("..\\record\\e_s.txt", "w");
+
+	//time delay buf
+	DelayedBuffer TimeDelayBuffer_m_to_s = DelayedBuffer(TaskSpaceDimension, 1);
+	DelayedData data_m_to_s;
+	int delay_m_to_s;
+
 	//--------start--------
 	int loopCount = 0;
 	while (!_kbhit())
@@ -230,11 +238,14 @@ int _tmain(int argc, _TCHAR* argv[])
 		 * part1:get master and slave robots information to update q,qDot,X...
 		 */
 
-		SYSTEMTIME LoopStart;
-		GetLocalTime(&LoopStart);
+		//SYSTEMTIME LoopStart;
+		//GetLocalTime(&LoopStart);
 		stringstream ss_from_slave;
 		char buf_from_slave[BUFLEN];
+		int timer_loop_start, timer_loop_end;
 
+		timer_loop_start = clock();
+		delay_m_to_s = 300 * sin(timer_loop_start);
 		//	store value for calculating time derivative
 		J_s_last = J_s;
 		q_m_last = q_m;
@@ -244,7 +255,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		X_s_last = X_s;
 		e_s_last = e_s;
 		s_s_last = s_s;
-
+		
 		//	receive from master and then update X_m_temp
 		if (!hdWaitForCompletion(Scheduler_GetCmd1, HD_WAIT_CHECK_STATUS) || !hdWaitForCompletion(Scheduler_GetCmd2, HD_WAIT_CHECK_STATUS))
 		{
@@ -261,7 +272,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			exit(EXIT_FAILURE);
 		}
 		//puts(buf_from_slave);
-
+		
 		ss_from_slave << buf_from_slave;
 		for (int num = 0; num < SlaveRobotNum; num++)
 		{
@@ -278,7 +289,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		if (abs(q_s - q_s_last).max() < 0.001)
 			q_s = q_s_last;
 
-
+		
 		//	update X_s
 		for (int axis = 0; axis < 3; axis++)
 		{
@@ -321,44 +332,36 @@ int _tmain(int argc, _TCHAR* argv[])
 			X_m = medianFilter(&X_mFilterBuf, &X_m, &X_mFilterBufFlag);
 			X_s = medianFilter(&X_sFilterBuf, &X_s, &X_sFilterBufFlag);*/
 		}
-		/*
-		//solve problem: When X_m is negtive over, slaves diverge due to variance command
-		for (int axis = 0; axis < TaskSpace_variance; axis++)
-		{
-			if (X_s(axis + TaskSpace_variance, 0) < 1 &&
-				X_m(axis + TaskSpace_variance, 0) < (X_m_initial(axis + TaskSpace_variance, 0) + X_m_last(axis + TaskSpace_variance, 0)))
-			{
-				X_m(axis + TaskSpace_variance, 0) = X_m_last(axis + TaskSpace_variance, 0) + X_m_initial(axis + TaskSpace_variance, 0);
-			}
-		}*/
-		/*
-		for (int axis = 0; axis < TaskSpace_variance; axis++)
-		{
-			if (alpha(axis + TaskSpace_variance, axis + TaskSpace_variance) * (X_m_initial(axis + TaskSpace_variance, 0) - X_m(axis + TaskSpace_variance, 0))
-					> X_s_initial(axis + TaskSpace_variance, 0))
-			{
-				X_m(axis + TaskSpace_variance, 0) = 0.0;
-			}
-		}*/
-		//shift
+
+		//	shift master coordinate to match slave initial condition
 		X_m = X_m - X_m_initial + inv(alpha) * X_s_initial;
-		for (int axis = 0; axis < SlaveRobotDOF; axis++)
+		for (int axis = 0; axis < SlaveRobotDOF; axis++)	//lower bound of command from omni
 		{
 			if (X_m(axis + TaskSpace_variance, 0) < 0.0)
 			{
 				X_m(axis + TaskSpace_variance, 0) = 0.0;
 			}
 		}
-		//X_s -= X_s_initial;
 		
+		//time delay
+		data_m_to_s = DelayedData(X_m, loopCount, timer_loop_start + delay_m_to_s);
+		TimeDelayBuffer_m_to_s.addData(data_m_to_s);
+		X_m = TimeDelayBuffer_m_to_s.getData(timer_loop_start);
+		
+
 		printToTxt(X_m_file, &X_m);
 		printToTxt(X_s_file, &X_s);
 		printToTxt(q_s_file, &q_s);
-		/*
-		X_m.t().print("X_m:");
-		X_s.t().print("X_s:");
-		*/
-		//update time derivative of X,q,qDot
+
+		//	produce time delay from master to slave
+		//		get sending time
+		//		calculate corresponding delay time
+		//		put data, sending time and delay time into buffer together
+
+
+
+		//	controller
+		//	update time derivative of X,q,qDot
 		if (loopCount != 0)	//skip at first because last value doesn't exist
 		{
 			XDot_s = timeDerivative(X_s_last, X_s);
@@ -387,7 +390,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			}
 			SlaveAveragePosition(axis,0) /= (double)SlaveRobotNum;
 		}
-
+		
 		//	primary task
 		for (int row = 0; row < TaskSpaceDimension; row++)
 		{
@@ -468,18 +471,19 @@ int _tmain(int argc, _TCHAR* argv[])
 			//u_s = diagmat(Y_s) * thetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
 			u_s = (qDoubleDot_s - timeDerivative(s_s_last, s_s)) - k_ss * s_s - trans(J_s) * k_p * J_s * s_s;
 
-			//u saturation
-			/*
+			//	u saturation
 			for (int i = 0; i < u_s.n_rows; i++)
 			{
-			if (abs(u_s(i, 0)) > 10.0)
-			{
-			if (u_s(i, 0) > 0)
-			u_s(i, 0) = 10.0;
-			else
-			u_s(i, 0) = -10.0;
+				if (abs(u_s(i, 0)) > u_s_saturation)
+				{
+					if (u_s(i, 0) > 0)
+						u_s(i, 0) = u_s_saturation;
+					else
+						u_s(i, 0) = -u_s_saturation;
+
+				}
 			}
-			}*/
+
 			VelocityCommand_s = VelocityCommand_s + u_s * SAMPLING_TIME;	//integrate
 		}
 		
@@ -539,13 +543,18 @@ int _tmain(int argc, _TCHAR* argv[])
 				
 		
 		//	make fix sampling time
+		/*
 		SYSTEMTIME LoopEnd;
 		GetLocalTime(&LoopEnd);
 		int ThisLoopTimeMillisecond = ((LoopEnd.wMinute - LoopStart.wMinute) * 60 + (LoopEnd.wSecond - LoopStart.wSecond)) * 1000 + (LoopEnd.wMilliseconds - LoopStart.wMilliseconds);
-		int SleepMillisecond = SAMPLING_TIME * 1000 - ThisLoopTimeMillisecond;
+		int SleepMillisecond = SAMPLING_TIME * 1000 - ThisLoopTimeMillisecond;*/
 		//cout << "sleep:" << SleepMillisecond << endl;
-		if (SleepMillisecond > 0)	//make sure the case loop time is not greater than sampling time
-			Sleep(SleepMillisecond);
+		
+		timer_loop_end = clock();
+		int until_sampling = SAMPLING_TIME * 1000 - (timer_loop_end - timer_loop_start);
+		if (until_sampling > 0)	//make sure the case loop time is not greater than sampling time
+			Sleep(until_sampling);
+
 		
 		
 	}

@@ -29,6 +29,18 @@ DelayedBuffer::DelayedBuffer(int row, int col)
 	lastOutput = DelayedData(arma::mat(row, col, arma::fill::zeros), 0, 0);
 }
 
+DelayedBuffer::DelayedBuffer(arma::mat m)
+{
+	lastOutput.data = m;
+	lastOutput.delay = 0;
+	lastOutput.number = 0;
+}
+
+DelayedBuffer::DelayedBuffer(DelayedData ini)
+{
+	lastOutput = ini;
+}
+
 DelayedBuffer::~DelayedBuffer()
 {
 	//do nothing
@@ -44,7 +56,7 @@ void DelayedBuffer::addData(DelayedData newData)
 	}
 	else
 	{
-		for (std::list<DelayedData>::iterator itr = buf.begin(); itr != buf.end(); ++itr)
+		for (std::vector<DelayedData>::iterator itr = buf.begin(); itr != buf.end(); ++itr)
 		{
 			if (newData.delay < itr->delay)
 			{
@@ -65,7 +77,7 @@ arma::mat DelayedBuffer::getData(int currentTime)
 {
 	DelayedData temp = lastOutput;
 	bool noDataArrived = true;
-	std::list<DelayedData>::iterator itr = buf.begin();
+	std::vector<DelayedData>::iterator itr = buf.begin();
 
 
 	if (!buf.empty())

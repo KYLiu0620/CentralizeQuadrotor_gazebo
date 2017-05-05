@@ -9,14 +9,13 @@
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
 #define SAMPLING_TIME 0.01	//unit:second
+#define DEVICE_NAME_1 "phantom1"
+#define DEVICE_NAME_2 "phantom2"
 
 //----------omni----------
 #include <HD\hd.h>
 #include <HDU\hduVector.h>
 #include <HDU\hduError.h>
-#define DEVICE_NAME_1 "phantom1"
-#define DEVICE_NAME_2 "phantom2"
-
 #include <time.h>
 #include <Windows.h>// systemtime
 #include <iostream>
@@ -29,12 +28,14 @@
 # include "conio.h"
 # include <windows.h>
 #endif
+
 #include "../TimeDelayBuffer/TimeDelayBuffer.h"
 
 using namespace std;
 using namespace arma;
 
 //--------global parameter--------
+bool DELAY_SWITCH = true;
 const int SlaveRobotNum = 4;		//n
 const int SlaveRobotDOF = 3;		//phi
 const int TaskSpaceDimension = 6;	//m
@@ -104,7 +105,7 @@ void printToTxt(FILE *dst, mat *src);
 int _tmain(int argc, _TCHAR* argv[])
 {
 	Sleep(500);
-
+	
 	//--------initialize--------
 	thetaHat_s.fill( 0.15 );
 	valpha << 0.2 << 0.2 << 0.2 << 0.2 << 0.2 << 0.2;
@@ -123,7 +124,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	k_p = diagmat(vk_p);
 	//vk_d << 0.00125 << 0.00125 << 0.00125 << 0.0001 << 0.0001 << 0.0001;
 	//k_d = diagmat(vk_d);
-	vk_t << 0.2 << 0.2 << 0.2 << 1 << 1 << 1;
+	vk_t << 0.2 << 0.2 << 0.2 << 0.8 << 0.8 << 0.8;
 	//vk_t << 0.05 << 0.05 << 0.05 << 0.5 << 0.5 << 0.5;
 	//vk_t << 0.02 << 0.02 << 0.02 << 0.2 << 0.2 << 0.2;
 	k_t = diagmat(vk_t);
@@ -217,17 +218,20 @@ int _tmain(int argc, _TCHAR* argv[])
 	}
 
 	//	open txt file for recording
+	FILE* X_m_no_delay_file = fopen("..\\record\\X_m_no_delay.txt", "w");
 	FILE* X_m_file = fopen("..\\record\\X_m.txt", "w");
 	FILE* X_s_file = fopen("..\\record\\X_s.txt", "w");
 	FILE* q_s_file = fopen("..\\record\\q_s.txt", "w");
 	FILE* qDot_s_file = fopen("..\\record\\qDot_s.txt", "w");
 	FILE* u_s_file = fopen("..\\record\\u_s.txt", "w");
 	FILE* e_s_file = fopen("..\\record\\e_s.txt", "w");
+	FILE* delay_s_file = fopen("..\\record\\delay_s.txt", "w");
 
 	//time delay buf
 	DelayedBuffer TimeDelayBuffer_m_to_s = DelayedBuffer(TaskSpaceDimension, 1);
 	DelayedData data_m_to_s;
 	int delay_m_to_s;
+	//char buf_print_to_txt[100];
 
 	//--------start--------
 	int loopCount = 0;
@@ -245,7 +249,9 @@ int _tmain(int argc, _TCHAR* argv[])
 		int timer_loop_start, timer_loop_end;
 
 		timer_loop_start = clock();
-		delay_m_to_s = 300 * sin(timer_loop_start);
+		delay_m_to_s = 1000 + 1000 * (int)sin(timer_loop_start);
+
+
 		//	store value for calculating time derivative
 		J_s_last = J_s;
 		q_m_last = q_m;
@@ -280,8 +286,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			{
 				ss_from_slave >> q_s(num * SlaveRobotDOF + axis, 0);
 			}
-		}
-		
+		}		
 		ss_from_slave.str("");
 		ss_from_slave.clear();
 
@@ -334,7 +339,9 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 
 		//	shift master coordinate to match slave initial condition
-		X_m = X_m - X_m_initial + inv(alpha) * X_s_initial;
+		X_m = X_m - X_m_initial + inv(alpha) * X_s_initial;		
+		printToTxt(X_m_no_delay_file, &X_m);
+
 		for (int axis = 0; axis < SlaveRobotDOF; axis++)	//lower bound of command from omni
 		{
 			if (X_m(axis + TaskSpace_variance, 0) < 0.0)
@@ -343,22 +350,21 @@ int _tmain(int argc, _TCHAR* argv[])
 			}
 		}
 		
-		//time delay
-		data_m_to_s = DelayedData(X_m, loopCount, timer_loop_start + delay_m_to_s);
-		TimeDelayBuffer_m_to_s.addData(data_m_to_s);
-		X_m = TimeDelayBuffer_m_to_s.getData(timer_loop_start);
+		if (loopCount == 0)
+			TimeDelayBuffer_m_to_s = DelayedBuffer(DelayedData(X_m, 0, 0));
 		
-
+		//time delay
+		if (DELAY_SWITCH)
+		{
+			data_m_to_s = DelayedData(X_m, loopCount, timer_loop_start + delay_m_to_s);
+			TimeDelayBuffer_m_to_s.addData(data_m_to_s);	//put current data into buffer
+			X_m = TimeDelayBuffer_m_to_s.getData(timer_loop_start);	//get arrived data from buffer
+			//cout << "size of buf: " << TimeDelayBuffer_m_to_s.buf.capacity() << endl;
+		}
+		
 		printToTxt(X_m_file, &X_m);
 		printToTxt(X_s_file, &X_s);
 		printToTxt(q_s_file, &q_s);
-
-		//	produce time delay from master to slave
-		//		get sending time
-		//		calculate corresponding delay time
-		//		put data, sending time and delay time into buffer together
-
-
 
 		//	controller
 		//	update time derivative of X,q,qDot
@@ -377,7 +383,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		e_s = alpha * X_m  - X_s;
 
 		eDot_s = timeDerivative(e_s_last, e_s);
-		e_s.t().print("e_s");
+		//e_s.t().print("e_s");
 		//J_m = ;
 		printToTxt(e_s_file, &e_s);
 
@@ -516,28 +522,34 @@ int _tmain(int argc, _TCHAR* argv[])
 			if (sendto(s, sFirstSend.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 			{
 				printf("sendto() failed with error code : %d", WSAGetLastError());
+				system("PAUSE");
 				exit(EXIT_FAILURE);
 			}
 			continue;
 		}
 		//	to slave
 		stringstream ss_to_s;
-		string s_to_s;
+		
 		for (int num = 0; num < SlaveRobotNum; num++)
 		{
 			for (int axis = 0; axis < SlaveRobotDOF; axis++)
 			{
-				ss_to_s << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";	
+				//ss_to_s << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";
+				ssFirstSend << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";
 			}
 		}
-		s_to_s = ss_to_s.str();
-		if (sendto(s, s_to_s.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
+		string s_to_s = ss_to_s.str();
+
+		if (sendto(s, sFirstSend.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 		{
 			printf("sendto() failed with error code : %d", WSAGetLastError());
+			system("PAUSE");
 			exit(EXIT_FAILURE);
 		}
-		cout << "sendto:" << endl << s_to_s << endl;
+
+		//cout << "sendto:" << endl << s_to_s << endl;
 		//	clear stringstream
+		cout << loopCount << endl;
 		ss_to_s.str("");
 		ss_to_s.clear();
 				

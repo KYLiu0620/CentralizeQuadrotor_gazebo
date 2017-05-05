@@ -2,13 +2,14 @@
 #define _TIMEDELAYBUFFER_H_
 
 #include <armadillo>
-#include <list>
+#include <vector>
 
 class DelayedData
 {
 public:
 	DelayedData();
 	DelayedData(arma::mat input_data, int data_no, int time);
+	
 	~DelayedData();
 
 	arma::mat data;
@@ -22,12 +23,14 @@ class DelayedBuffer
 public:
 	DelayedBuffer();
 	DelayedBuffer(int row, int col);
+	DelayedBuffer(arma::mat m);
+	DelayedBuffer(DelayedData ini);
 	~DelayedBuffer();
 	void addData(DelayedData newData);
 	arma::mat getData(int currentTime);
 
 
-	std::list <DelayedData> buf;
+	std::vector <DelayedData> buf;
 	DelayedData lastOutput;
 
 };

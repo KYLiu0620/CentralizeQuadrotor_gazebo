@@ -77,12 +77,13 @@ mat thetaHatDot_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat f_a( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat u_m;
 mat u_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
-
 mat VelocityCommand_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 
 vec vk_p, vk_d, vk_t, valpha;
 mat k_p, k_d, k_t, alpha;
 double k_ss = 7.5 * 0.05;
+
+string s_to_s;
 
 HHD DeviceID_1, DeviceID_2;/*
 mat OmniBuf1(TaskSpace_variance, 3, fill::zeros);
@@ -104,8 +105,10 @@ void printToTxt(FILE *dst, mat *src);
 //-----------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
-	Sleep(500);
-	
+	stringstream ss;
+	string string_converted;
+
+	Sleep(500);	
 	//--------initialize--------
 	thetaHat_s.fill( 0.15 );
 	valpha << 0.2 << 0.2 << 0.2 << 0.2 << 0.2 << 0.2;
@@ -207,16 +210,19 @@ int _tmain(int argc, _TCHAR* argv[])
 	HDSchedulerHandle Scheduler_GetCmd2 = hdScheduleAsynchronous(GetCmd2Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
 	
 	//	use sendto() before using recvfrom() to implicitly bind
-	stringstream ssFirstSend;
 	for (int i = 0; i < SlaveRobotDOF * SlaveRobotNum; i++)
-		ssFirstSend << "0 ";
-	string sFirstSend = ssFirstSend.str();
-	if (sendto(s, sFirstSend.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
+		ss << "0 ";
+	s_to_s = ss.str();
+	ss.str("");
+	ss.clear();
+
+	if (sendto(s, s_to_s.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 	{
 		printf("sendto() failed with error code : %d", WSAGetLastError());
 		exit(EXIT_FAILURE);
 	}
-
+	
+	
 	//	open txt file for recording
 	FILE* X_m_no_delay_file = fopen("..\\record\\X_m_no_delay.txt", "w");
 	FILE* X_m_file = fopen("..\\record\\X_m.txt", "w");
@@ -244,13 +250,18 @@ int _tmain(int argc, _TCHAR* argv[])
 
 		//SYSTEMTIME LoopStart;
 		//GetLocalTime(&LoopStart);
-		stringstream ss_from_slave;
 		char buf_from_slave[BUFLEN];
 		int timer_loop_start, timer_loop_end;
 
 		timer_loop_start = clock();
-		delay_m_to_s = 1000 + 1000 * (int)sin(timer_loop_start);
-
+		//delay_m_to_s = 1000 + 1000 * sin(0.0001*timer_loop_start);
+		delay_m_to_s = 1000;
+		ss << delay_m_to_s << endl;
+		string_converted = ss.str();
+		fprintf(delay_s_file, string_converted.c_str());
+		ss.str("");
+		ss.clear();
+		
 
 		//	store value for calculating time derivative
 		J_s_last = J_s;
@@ -279,16 +290,16 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 		//puts(buf_from_slave);
 		
-		ss_from_slave << buf_from_slave;
+		ss << buf_from_slave;
 		for (int num = 0; num < SlaveRobotNum; num++)
 		{
 			for (int axis = 0; axis < SlaveRobotDOF; axis++)
 			{
-				ss_from_slave >> q_s(num * SlaveRobotDOF + axis, 0);
+				ss >> q_s(num * SlaveRobotDOF + axis, 0);
 			}
-		}		
-		ss_from_slave.str("");
-		ss_from_slave.clear();
+		}
+		ss.str("");
+		ss.clear();
 
 		//filter q_s
 		if (abs(q_s - q_s_last).max() < 0.001)
@@ -340,7 +351,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 		//	shift master coordinate to match slave initial condition
 		X_m = X_m - X_m_initial + inv(alpha) * X_s_initial;		
-		printToTxt(X_m_no_delay_file, &X_m);
+		
 
 		for (int axis = 0; axis < SlaveRobotDOF; axis++)	//lower bound of command from omni
 		{
@@ -349,7 +360,7 @@ int _tmain(int argc, _TCHAR* argv[])
 				X_m(axis + TaskSpace_variance, 0) = 0.0;
 			}
 		}
-		
+		printToTxt(X_m_no_delay_file, &X_m);
 		if (loopCount == 0)
 			TimeDelayBuffer_m_to_s = DelayedBuffer(DelayedData(X_m, 0, 0));
 		
@@ -514,9 +525,10 @@ int _tmain(int argc, _TCHAR* argv[])
 		/* 
 		 * part3:send command to robots
 		 */
-		
-		//	get enough data for median filter in the beginning and send command to keep remote UDP working(for blocking)
 		loopCount++;
+		//	get enough data for median filter in the beginning and send command to keep remote UDP working(for blocking)
+		
+		/*
 		if (loopCount < 5)
 		{
 			if (sendto(s, sFirstSend.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
@@ -526,49 +538,34 @@ int _tmain(int argc, _TCHAR* argv[])
 				exit(EXIT_FAILURE);
 			}
 			continue;
-		}
+		}*/
 		//	to slave
-		stringstream ss_to_s;
 		
 		for (int num = 0; num < SlaveRobotNum; num++)
 		{
 			for (int axis = 0; axis < SlaveRobotDOF; axis++)
 			{
-				//ss_to_s << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";
-				ssFirstSend << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";
+				ss << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";
 			}
 		}
-		string s_to_s = ss_to_s.str();
-
-		if (sendto(s, sFirstSend.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
+		s_to_s = ss.str();
+		//	clear stringstream
+		ss.str("");
+		ss.clear();
+		if (sendto(s, s_to_s.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 		{
 			printf("sendto() failed with error code : %d", WSAGetLastError());
 			system("PAUSE");
 			exit(EXIT_FAILURE);
 		}
-
-		//cout << "sendto:" << endl << s_to_s << endl;
-		//	clear stringstream
-		cout << loopCount << endl;
-		ss_to_s.str("");
-		ss_to_s.clear();
-				
 		
 		//	make fix sampling time
-		/*
-		SYSTEMTIME LoopEnd;
-		GetLocalTime(&LoopEnd);
-		int ThisLoopTimeMillisecond = ((LoopEnd.wMinute - LoopStart.wMinute) * 60 + (LoopEnd.wSecond - LoopStart.wSecond)) * 1000 + (LoopEnd.wMilliseconds - LoopStart.wMilliseconds);
-		int SleepMillisecond = SAMPLING_TIME * 1000 - ThisLoopTimeMillisecond;*/
-		//cout << "sleep:" << SleepMillisecond << endl;
-		
 		timer_loop_end = clock();
 		int until_sampling = SAMPLING_TIME * 1000 - (timer_loop_end - timer_loop_start);
 		if (until_sampling > 0)	//make sure the case loop time is not greater than sampling time
 			Sleep(until_sampling);
-
 		
-		
+	
 	}
 
 	//--------end--------	

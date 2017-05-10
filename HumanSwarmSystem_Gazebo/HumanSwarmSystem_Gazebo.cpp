@@ -83,17 +83,18 @@ vec vk_p, vk_d, vk_t, valpha;
 mat k_p, k_d, k_t, alpha;
 double k_ss = 7.5 * 0.05;
 
-string s_to_s;
-
-HHD DeviceID_1, DeviceID_2;/*
+HHD DeviceID_1, DeviceID_2;
+/*
 mat OmniBuf1(TaskSpace_variance, 3, fill::zeros);
 mat OmniBuf2(TaskSpace_variance, 3, fill::zeros);
 int OmniBufFlag1 = 0;
-int OmniBufFlag2 = 0;*/
+int OmniBufFlag2 = 0;
+
 mat X_mFilterBuf(TaskSpaceDimension, 3, fill::zeros);
 int X_mFilterBufFlag = 0;
 mat X_sFilterBuf(TaskSpaceDimension, 3, fill::zeros);
 int X_sFilterBufFlag = 0;
+*/
 
 double l_1_Omni = 133.0, l_2_Omni = 133.0;
 //--------function--------
@@ -101,10 +102,12 @@ mat timeDerivative(mat last, mat now);
 vec medianFilter(mat* dataBuf, mat* newData, int* BufFlag);
 HDCallbackCode HDCALLBACK GetCmd1Callback(void *data);
 HDCallbackCode HDCALLBACK GetCmd2Callback(void *data);
-void printToTxt(FILE *dst, mat *src);
+void printMatToTxt(FILE *dst, mat *src);
+char* toSendBuf(string src);
 //-----------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
+	char* sendtoBuf = NULL;
 	stringstream ss;
 	string string_converted;
 
@@ -212,17 +215,24 @@ int _tmain(int argc, _TCHAR* argv[])
 	//	use sendto() before using recvfrom() to implicitly bind
 	for (int i = 0; i < SlaveRobotDOF * SlaveRobotNum; i++)
 		ss << "0 ";
-	s_to_s = ss.str();
+	//string_converted = ss.str();
+	sendtoBuf = toSendBuf(ss.str());
 	ss.str("");
 	ss.clear();
-
-	if (sendto(s, s_to_s.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
+	/*
+	char *test = new char[string_converted.size()+1];
+	strcpy(test, string_converted.c_str());
+	*/
+	
+	if (sendto(s, sendtoBuf, BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 	{
-		printf("sendto() failed with error code : %d", WSAGetLastError());
+		printf("1sendto() failed with error code : %d", WSAGetLastError());
+		system("PAUSE");
 		exit(EXIT_FAILURE);
 	}
-	
-	
+	delete[] sendtoBuf;
+	sendtoBuf = NULL;
+
 	//	open txt file for recording
 	FILE* X_m_no_delay_file = fopen("..\\record\\X_m_no_delay.txt", "w");
 	FILE* X_m_file = fopen("..\\record\\X_m.txt", "w");
@@ -232,18 +242,16 @@ int _tmain(int argc, _TCHAR* argv[])
 	FILE* u_s_file = fopen("..\\record\\u_s.txt", "w");
 	FILE* e_s_file = fopen("..\\record\\e_s.txt", "w");
 	FILE* delay_s_file = fopen("..\\record\\delay_s.txt", "w");
-
+	
 	//time delay buf
 	DelayedBuffer TimeDelayBuffer_m_to_s = DelayedBuffer(TaskSpaceDimension, 1);
 	DelayedData data_m_to_s;
-	int delay_m_to_s;
-	//char buf_print_to_txt[100];
+	int delay_m_to_s;	//unit:ms
 
 	//--------start--------
 	int loopCount = 0;
 	while (!_kbhit())
-	{
-		
+	{		
 		/* 
 		 * part1:get master and slave robots information to update q,qDot,X...
 		 */
@@ -360,7 +368,7 @@ int _tmain(int argc, _TCHAR* argv[])
 				X_m(axis + TaskSpace_variance, 0) = 0.0;
 			}
 		}
-		printToTxt(X_m_no_delay_file, &X_m);
+		printMatToTxt(X_m_no_delay_file, &X_m);
 		if (loopCount == 0)
 			TimeDelayBuffer_m_to_s = DelayedBuffer(DelayedData(X_m, 0, 0));
 		
@@ -373,9 +381,9 @@ int _tmain(int argc, _TCHAR* argv[])
 			//cout << "size of buf: " << TimeDelayBuffer_m_to_s.buf.capacity() << endl;
 		}
 		
-		printToTxt(X_m_file, &X_m);
-		printToTxt(X_s_file, &X_s);
-		printToTxt(q_s_file, &q_s);
+		printMatToTxt(X_m_file, &X_m);
+		printMatToTxt(X_s_file, &X_s);
+		printMatToTxt(q_s_file, &q_s);
 
 		//	controller
 		//	update time derivative of X,q,qDot
@@ -386,7 +394,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			qDot_s = timeDerivative(q_s_last, q_s);
 			qDoubleDot_s = timeDerivative(qDot_s_last, qDot_s);
 		}
-		printToTxt(qDot_s_file, &qDot_s);
+		printMatToTxt(qDot_s_file, &qDot_s);
 		/* 
 		 * part2:update other parameters
 		 */		
@@ -396,7 +404,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		eDot_s = timeDerivative(e_s_last, e_s);
 		//e_s.t().print("e_s");
 		//J_m = ;
-		printToTxt(e_s_file, &e_s);
+		printMatToTxt(e_s_file, &e_s);
 
 		mat SlaveAveragePosition(SlaveRobotDOF, 1, fill::zeros);
 		for (int axis = 0; axis < SlaveRobotDOF; axis++)
@@ -510,17 +518,7 @@ int _tmain(int argc, _TCHAR* argv[])
 				VelocityCommand_s(i, 0) = 0.0;
 		}
 
-
-		printToTxt(u_s_file, &u_s);
-		/*
-		//	velocity saturation
-		for (int i = 0; i < SlaveRobotNum * SlaveRobotDOF; i++)
-		{
-			if (abs(VelocityCommand_s(i, 0)) > 10.0)
-				VelocityCommand_s(i, 0) = 10.0;
-			if (abs(VelocityCommand_s(i, 0)) < 0.001)
-				VelocityCommand_s(i, 0) = 0.0;
-		}*/
+		printMatToTxt(u_s_file, &u_s);
 
 		/* 
 		 * part3:send command to robots
@@ -548,24 +546,25 @@ int _tmain(int argc, _TCHAR* argv[])
 				ss << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";
 			}
 		}
-		s_to_s = ss.str();
+		sendtoBuf = toSendBuf(ss.str());
+		//string_converted = ss.str();
 		//	clear stringstream
 		ss.str("");
 		ss.clear();
-		if (sendto(s, s_to_s.c_str(), BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
+		if (sendto(s, sendtoBuf, BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 		{
-			printf("sendto() failed with error code : %d", WSAGetLastError());
+			printf("2sendto() failed with error code : %d", WSAGetLastError());
 			system("PAUSE");
 			exit(EXIT_FAILURE);
 		}
-		
+		delete[] sendtoBuf;
+		sendtoBuf = NULL;
+		cout << loopCount << endl;
 		//	make fix sampling time
 		timer_loop_end = clock();
 		int until_sampling = SAMPLING_TIME * 1000 - (timer_loop_end - timer_loop_start);
 		if (until_sampling > 0)	//make sure the case loop time is not greater than sampling time
 			Sleep(until_sampling);
-		
-	
 	}
 
 	//--------end--------	
@@ -638,7 +637,7 @@ vec medianFilter(mat* dataBuf, mat* newData, int* BufFlag)
 	return result;
 }
 
-void printToTxt(FILE *dst, mat *src)
+void printMatToTxt(FILE *dst, mat *src)
 {
 	for (int i = 0; i < src->n_rows; i++)
 	{
@@ -647,4 +646,11 @@ void printToTxt(FILE *dst, mat *src)
 			fprintf(dst, " ");
 	}
 	fprintf(dst, "\n");
+}
+
+char* toSendBuf(string src)
+{
+	char* buf = new char[src.size()+1];
+	strcpy(buf, src.c_str());
+	return buf;
 }

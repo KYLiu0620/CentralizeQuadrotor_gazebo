@@ -3,7 +3,7 @@
 
 #include "stdafx.h"
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define SERVER "192.168.19.73"
+#define SERVER "192.168.19.95"
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
 #define SAMPLING_TIME 0.01	//unit:second
@@ -43,6 +43,7 @@ const int SlaveRobotNum = 4;		//n
 const int SlaveRobotDOF = 3;		//phi
 const int TaskSpaceDimension = MasterRobotNum * MasterRobotDOF;	//m
 const int TaskSpace_variance = TaskSpaceDimension / MasterRobotNum;
+const int rows_ThetaHat_m = 8;
 const double u_s_saturation = 7.0;
 const double l_1_Omni = 133.0, l_2_Omni = 133.0;
 const double MatElementTolerence = 0.00001;	//when using inv,pinv, the consequence less than this will equal to zero
@@ -54,34 +55,48 @@ mat X_s_last(TaskSpaceDimension, 1, fill::zeros);
 mat XDot_s( TaskSpaceDimension, 1, fill::zeros );
 mat X_m_initial(TaskSpaceDimension, 1, fill::zeros);
 mat X_s_initial(TaskSpaceDimension, 1, fill::zeros);
-mat e_m( TaskSpaceDimension, 1, fill::zeros );
+mat e_m_vec( TaskSpaceDimension, 1, fill::zeros );
+mat e_m( MasterRobotDOF, MasterRobotNum, fill::zeros);
 mat e_s( TaskSpaceDimension, 1, fill::zeros );
 mat e_s_last(TaskSpaceDimension, 1, fill::zeros);
 mat eDot_s( TaskSpaceDimension, 1, fill::zeros );
-mat s_m( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
+mat s_m( MasterRobotDOF, MasterRobotNum, fill::zeros );
+mat v_m(size(s_m), fill::zeros);
+mat v_m_last(size(s_m), fill::zeros);
+mat a_m(size(s_m), fill::zeros);
 mat s_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat s_s_last(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
-mat q_m(TaskSpaceDimension, 1, fill::zeros);
-mat q_m_last(TaskSpaceDimension, 1, fill::zeros);
-mat qDot_m(TaskSpaceDimension, 1, fill::zeros);
+mat q_m(size(s_m), fill::zeros);
+mat q_m_last(size(s_m), fill::zeros);
+mat qDot_m(size(s_m), fill::zeros);
 mat q_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat q_s_last(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat qDot_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat qDot_s_last(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat qDoubleDot_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
-mat J_m(TaskSpaceDimension, TaskSpaceDimension, fill::zeros);
+mat J_m1(MasterRobotDOF, TaskSpaceDimension/2, fill::zeros);
+mat J_m2(size(J_m1), fill::zeros);
+mat J_m1_last(size(J_m1), fill::zeros);
+mat J_m2_last(size(J_m1), fill::zeros);
+mat JDot_m1(size(J_m1), fill::zeros);
+mat JDot_m2(size(J_m1), fill::zeros);
 mat J_s( TaskSpaceDimension, SlaveRobotNum * SlaveRobotDOF, fill::zeros );
 mat J_s_last(TaskSpaceDimension, SlaveRobotNum * SlaveRobotDOF, fill::zeros);
 mat JDot_s(TaskSpaceDimension, SlaveRobotNum * SlaveRobotDOF, fill::zeros);
 mat invJ_m, pinvJ_s;
-//mat Y_m(TaskSpaceDimension, , fill::zeros);
-mat thetaHat_s( SlaveRobotNum * SlaveRobotDOF, 1 );
-mat thetaHatDot_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
+mat Y_m1(MasterRobotDOF, rows_ThetaHat_m, fill::zeros);
+mat Y_m2(size(Y_m1), fill::zeros);
+mat ThetaHat_s( SlaveRobotNum * SlaveRobotDOF, 1 );
+mat ThetaHatDot_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat f_a( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat u_m;
+mat u_m_multiCol(size(s_m), fill::zeros);
+mat forceOutput(size(s_m), fill::zeros);
 mat u_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat VelocityCommand_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat theta_m(MasterRobotDOF * MasterRobotNum, 1, fill::zeros);
+mat ThetaHat_m(rows_ThetaHat_m, 1);
+mat ThetaHatDot_m(rows_ThetaHat_m, 1, fill::zeros);
 
 vec vk_p, vk_d, vk_t, valpha;
 mat k_p, k_d, k_t, alpha;
@@ -110,6 +125,8 @@ HDCallbackCode HDCALLBACK ForceOutput1Callback(void *data);
 HDCallbackCode HDCALLBACK ForceOutput2Callback(void *data);
 void printMatToTxt(FILE *dst, mat *src);
 char* stringToChar_heap(string src);
+void ForceController(int MasterNo, mat *J, mat *JDot, mat* Y);
+
 //-----------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
@@ -119,7 +136,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	stringstream ss;
 	string string_converted;
 
-	thetaHat_s.fill( 0.15 );
+	ThetaHat_s.fill( 0.15 );
 	valpha << 0.2 << 0.2 << 0.2 << 0.2 << 0.2 << 0.2;
 	alpha = diagmat(valpha);
 	/*
@@ -210,8 +227,10 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	//	set omni & scheduler
 	DeviceID_1 = hdInitDevice(DEVICE_NAME_1);
+	hdMakeCurrentDevice(DeviceID_1);
 	hdEnable(HD_FORCE_OUTPUT);
 	DeviceID_2 = hdInitDevice(DEVICE_NAME_2);
+	hdMakeCurrentDevice(DeviceID_2);
 	hdEnable(HD_FORCE_OUTPUT);
 	hdStartScheduler();
 	HDSchedulerHandle Scheduler_GetCmd1 = hdScheduleAsynchronous(GetCmd1Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
@@ -283,6 +302,9 @@ int _tmain(int argc, _TCHAR* argv[])
 		X_s_last = X_s;
 		e_s_last = e_s;
 		s_s_last = s_s;
+		J_m1_last = J_m1;
+		J_m2_last = J_m2;
+		v_m_last = v_m;
 		
 		//	receive from master and then update X_m_temp
 		if (!hdWaitForCompletion(Scheduler_GetCmd1, HD_WAIT_CHECK_STATUS) || !hdWaitForCompletion(Scheduler_GetCmd2, HD_WAIT_CHECK_STATUS))
@@ -335,18 +357,16 @@ int _tmain(int argc, _TCHAR* argv[])
 			X_s(axis + TaskSpace_variance, 0) = VarSum / (double)SlaveRobotNum;
 		}
 
-		//	update X_m ,theta_m ,q_m
+		//	update X_m ,q_m
 		X_m = X_m_temp;	//don't put this just after hdWaitForCompletion,
 						//or the callback could not be completed yet
 						//and the value might be changed unexpected
-		theta_m(0, 0) = JointAngle_m1[0];	//master1
-		theta_m(1, 0) = JointAngle_m1[1];
-		theta_m(2, 0) = JointAngle_m1[2] - JointAngle_m1[1];
-		theta_m(3, 0) = JointAngle_m2[0];	//master2
-		theta_m(4, 0) = JointAngle_m2[1];
-		theta_m(5, 0) = JointAngle_m2[2] - JointAngle_m2[1];
-		for (int i = 0; i < q_m.rows; i++)
-			q_m(i, 0) = theta_m(i, 0);
+		q_m(0,0) = JointAngle_m1[0];	//master1
+		q_m(1,0) = JointAngle_m1[1];
+		q_m(2,0) = JointAngle_m1[2] - JointAngle_m1[1];
+		q_m(0,1) = JointAngle_m2[0];	//master2
+		q_m(1,1) = JointAngle_m2[1];
+		q_m(2,1) = JointAngle_m2[2] - JointAngle_m2[1];
 
 /*
 		//filter q_s
@@ -413,58 +433,61 @@ int _tmain(int argc, _TCHAR* argv[])
 		/* 
 		 * part2:update other parameters
 		 */		
-		e_m = inv(alpha) *  X_s  - X_m;
+		e_m_vec = inv(alpha) *  X_s  - X_m;
 		e_s = alpha * X_m  - X_s;
+		e_m.col(0) = e_m_vec.rows(0, MasterRobotDOF - 1);
+		e_m.col(1) = e_m_vec.rows(MasterRobotDOF, MasterRobotDOF * 2 - 1);
 
 		eDot_s = timeDerivative(e_s_last, e_s);
 		//e_s.t().print("e_s");
 		//	J_m
-		J_m(0, 0) = -l_1_Omni*cos(theta_m(0, 0)) * cos(theta_m(1, 0))	//master1
-			- l_2_Omni * cos(theta_m(0, 0)) * cos(theta_m(1, 0)) * sin(theta_m(2, 0))
-			- l_2_Omni * cos(theta_m(0, 0)) * sin(theta_m(1, 0)) * cos(theta_m(2, 0));
-		J_m(0, 1) = l_2_Omni * sin(theta_m(0, 0)) * sin(theta_m(1, 0)) * sin(theta_m(2, 0))
-			+ l_1_Omni *sin(theta_m(0, 0)) * sin(theta_m(1, 0))
-			- l_2_Omni * sin(theta_m(0, 0)) *cos(theta_m(1, 0)) * cos(theta_m(2, 0));
-		J_m(0,2) = -l_2_Omni * sin(theta_m(0, 0)) * cos(theta_m(1, 0)) * cos(theta_m(2, 0)) 
-			+ l_2_Omni * sin(theta_m(0, 0)) * sin(theta_m(1, 0)) * sin(theta_m(2, 0));
+		/*
+		J_m(0, 0) = -l_1_Omni*cos(q_m(0,0)) * cos(q_m(1,0))	//master1
+			- l_2_Omni * cos(q_m(0,0)) * cos(q_m(1,0)) * sin(q_m(2,0))
+			- l_2_Omni * cos(q_m(0,0)) * sin(q_m(1,0)) * cos(q_m(2,0));
+		J_m(0, 1) = l_2_Omni * sin(q_m(0,0)) * sin(q_m(1,0)) * sin(q_m(2,0))
+			+ l_1_Omni *sin(q_m(0,0)) * sin(q_m(1,0))
+			- l_2_Omni * sin(q_m(0,0)) *cos(q_m(1,0)) * cos(q_m(2,0));
+		J_m(0,2) = -l_2_Omni * sin(q_m(0,0)) * cos(q_m(1,0)) * cos(q_m(2,0)) 
+			+ l_2_Omni * sin(q_m(0,0)) * sin(q_m(1,0)) * sin(q_m(2,0));
 		J_m(1,0) = 0;
-		J_m(1, 1) = l_2_Omni * sin(theta_m(1, 0)) * cos(theta_m(2, 0)) 
-			+ l_2_Omni * cos(theta_m(1, 0)) * sin(theta_m(2, 0)) 
-			+ l_1_Omni  *  cos(theta_m(1, 0));
-		J_m(1,2) = l_2_Omni * cos(theta_m(1, 0)) * sin(theta_m(2, 0)) 
-			+ l_2_Omni * sin(theta_m(1, 0)) * cos(theta_m(2, 0));
-		J_m(2,0) = -l_2_Omni * sin(theta_m(0, 0)) * sin(theta_m(1, 0)) * cos(theta_m(2, 0)) 
-			- l_1_Omni * sin(theta_m(0, 0)) * cos(theta_m(1, 0)) 
-			- l_2_Omni * sin(theta_m(0, 0)) * cos(theta_m(1, 0)) * sin(theta_m(2, 0));
-		J_m(2,1) = l_2_Omni * cos(theta_m(0, 0)) * cos(theta_m(1, 0)) * cos(theta_m(2, 0)) 
-			- l_2_Omni * cos(theta_m(0, 0)) * sin(theta_m(1, 0)) * sin(theta_m(2, 0)) 
-			- l_1_Omni * cos(theta_m(0, 0)) * sin(theta_m(1, 0));
-		J_m(2,2) = l_2_Omni * cos(theta_m(0, 0)) * cos(theta_m(1, 0)) * cos(theta_m(2, 0)) 
-			- l_2_Omni * cos(theta_m(0, 0)) * sin(theta_m(1, 0)) * sin(theta_m(2, 0));
+		J_m(1, 1) = l_2_Omni * sin(q_m(1,0)) * cos(q_m(2,0)) 
+			+ l_2_Omni * cos(q_m(1,0)) * sin(q_m(2,0)) 
+			+ l_1_Omni  *  cos(q_m(1,0));
+		J_m(1,2) = l_2_Omni * cos(q_m(1,0)) * sin(q_m(2,0)) 
+			+ l_2_Omni * sin(q_m(1,0)) * cos(q_m(2,0));
+		J_m(2,0) = -l_2_Omni * sin(q_m(0,0)) * sin(q_m(1,0)) * cos(q_m(2,0)) 
+			- l_1_Omni * sin(q_m(0,0)) * cos(q_m(1,0)) 
+			- l_2_Omni * sin(q_m(0,0)) * cos(q_m(1,0)) * sin(q_m(2,0));
+		J_m(2,1) = l_2_Omni * cos(q_m(0,0)) * cos(q_m(1,0)) * cos(q_m(2,0)) 
+			- l_2_Omni * cos(q_m(0,0)) * sin(q_m(1,0)) * sin(q_m(2,0)) 
+			- l_1_Omni * cos(q_m(0,0)) * sin(q_m(1,0));
+		J_m(2,2) = l_2_Omni * cos(q_m(0,0)) * cos(q_m(1,0)) * cos(q_m(2,0)) 
+			- l_2_Omni * cos(q_m(0,0)) * sin(q_m(1,0)) * sin(q_m(2,0));
 
-		J_m(3, 3) = -l_1_Omni*cos(theta_m(3, 0)) * cos(theta_m(4, 0))	//master2
-			- l_2_Omni * cos(theta_m(3, 0)) * cos(theta_m(4, 0)) * sin(theta_m(5, 0))
-			- l_2_Omni * cos(theta_m(3, 0)) * sin(theta_m(4, 0)) * cos(theta_m(5, 0));
-		J_m(3, 4) = l_2_Omni * sin(theta_m(3, 0)) * sin(theta_m(4, 0)) * sin(theta_m(5, 0))
-			+ l_1_Omni *sin(theta_m(3, 0)) * sin(theta_m(4, 0))
-			- l_2_Omni * sin(theta_m(3, 0)) *cos(theta_m(4, 0)) * cos(theta_m(5, 0));
-		J_m(3, 5) = -l_2_Omni * sin(theta_m(3, 0)) * cos(theta_m(4, 0)) * cos(theta_m(5, 0))
-			+ l_2_Omni * sin(theta_m(3, 0)) * sin(theta_m(4, 0)) * sin(theta_m(5, 0));
+		J_m(3, 3) = -l_1_Omni*cos(q_m(0,1)) * cos(q_m(1,1))	//master2
+			- l_2_Omni * cos(q_m(0,1)) * cos(q_m(1,1)) * sin(q_m(2,1))
+			- l_2_Omni * cos(q_m(0,1)) * sin(q_m(1,1)) * cos(q_m(2,1));
+		J_m(3, 4) = l_2_Omni * sin(q_m(0,1)) * sin(q_m(1,1)) * sin(q_m(2,1))
+			+ l_1_Omni *sin(q_m(0,1)) * sin(q_m(1,1))
+			- l_2_Omni * sin(q_m(0,1)) *cos(q_m(1,1)) * cos(q_m(2,1));
+		J_m(3, 5) = -l_2_Omni * sin(q_m(0,1)) * cos(q_m(1,1)) * cos(q_m(2,1))
+			+ l_2_Omni * sin(q_m(0,1)) * sin(q_m(1,1)) * sin(q_m(2,1));
 		J_m(4, 3) = 0;
-		J_m(4, 4) = l_2_Omni * sin(theta_m(4, 0)) * cos(theta_m(5, 0))
-			+ l_2_Omni * cos(theta_m(4, 0)) * sin(theta_m(5, 0))
-			+ l_1_Omni  *  cos(theta_m(4, 0));
-		J_m(4, 5) = l_2_Omni * cos(theta_m(4, 0)) * sin(theta_m(5, 0))
-			+ l_2_Omni * sin(theta_m(4, 0)) * cos(theta_m(5, 0));
-		J_m(5, 3) = -l_2_Omni * sin(theta_m(3, 0)) * sin(theta_m(4, 0)) * cos(theta_m(5, 0))
-			- l_1_Omni * sin(theta_m(3, 0)) * cos(theta_m(4, 0))
-			- l_2_Omni * sin(theta_m(3, 0)) * cos(theta_m(4, 0)) * sin(theta_m(5, 0));
-		J_m(5, 4) = l_2_Omni * cos(theta_m(3, 0)) * cos(theta_m(4, 0)) * cos(theta_m(5, 0))
-			- l_2_Omni * cos(theta_m(3, 0)) * sin(theta_m(4, 0)) * sin(theta_m(5, 0))
-			- l_1_Omni * cos(theta_m(3, 0)) * sin(theta_m(4, 0));
-		J_m(5, 5) = l_2_Omni * cos(theta_m(3, 0)) * cos(theta_m(4, 0)) * cos(theta_m(5, 0))
-			- l_2_Omni * cos(theta_m(3, 0)) * sin(theta_m(4, 0)) * sin(theta_m(5, 0));
-
+		J_m(4, 4) = l_2_Omni * sin(q_m(1,1)) * cos(q_m(2,1))
+			+ l_2_Omni * cos(q_m(1,1)) * sin(q_m(2,1))
+			+ l_1_Omni  *  cos(q_m(1,1));
+		J_m(4, 5) = l_2_Omni * cos(q_m(1,1)) * sin(q_m(2,1))
+			+ l_2_Omni * sin(q_m(1,1)) * cos(q_m(2,1));
+		J_m(5, 3) = -l_2_Omni * sin(q_m(0,1)) * sin(q_m(1,1)) * cos(q_m(2,1))
+			- l_1_Omni * sin(q_m(0,1)) * cos(q_m(1,1))
+			- l_2_Omni * sin(q_m(0,1)) * cos(q_m(1,1)) * sin(q_m(2,1));
+		J_m(5, 4) = l_2_Omni * cos(q_m(0,1)) * cos(q_m(1,1)) * cos(q_m(2,1))
+			- l_2_Omni * cos(q_m(0,1)) * sin(q_m(1,1)) * sin(q_m(2,1))
+			- l_1_Omni * cos(q_m(0,1)) * sin(q_m(1,1));
+		J_m(5, 5) = l_2_Omni * cos(q_m(0,1)) * cos(q_m(1,1)) * cos(q_m(2,1))
+			- l_2_Omni * cos(q_m(0,1)) * sin(q_m(1,1)) * sin(q_m(2,1));
+		*/
 		printMatToTxt(e_s_file, &e_s);
 
 		mat SlaveAveragePosition(SlaveRobotDOF, 1, fill::zeros);
@@ -506,7 +529,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			}
 		}
 
-		invJ_m = inv( J_m, MatElementTolerence );
+		//invJ_m = inv( J_m, MatElementTolerence );
 		pinvJ_s = pinv( J_s, MatElementTolerence );
 		//	secondary task
 		//	maximize inner distance
@@ -545,16 +568,16 @@ int _tmain(int argc, _TCHAR* argv[])
 		f_a = -InnerDistancef_a * 10.0 -CollisionAvoidancef_a * 0.0;
 		
 		JDot_s = timeDerivative(J_s_last, J_s);
-		s_m = -inv(J_m) * k_t * e_m + qDot_m;
+		//s_m = -inv(J_m) * k_t * e_m + qDot_m;
 		s_s = -pinvJ_s * k_t * e_s + qDot_s - ( eye( SlaveRobotNum * SlaveRobotDOF, SlaveRobotNum * SlaveRobotDOF ) - pinvJ_s * J_s ) * f_a;
 		//Y_s = pinv(JDot_s, MatElementTolerence) * k_t * e_s + pinvJ_s * k_t * eDot_s + qDoubleDot_s;
 		//Y_s = timeDerivative(s_s_last, s_s);
-		//thetaHatDot_s = -1 * diagmat(Y_s).t() * s_s;
+		//ThetaHatDot_s = -1 * diagmat(Y_s).t() * s_s;
 		if (loopCount >= 5)
 		{
 			//thetaHat_m += thetaHatDot_m * SAMPLING_TIME;
 			//u_m = ;
-			//u_s = diagmat(Y_s) * thetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
+			//u_s = diagmat(Y_s) * ThetaHat_s - k_ss * s_s - trans(J_s) * k_p * (-k_t * e_s + XDot_s);
 			u_s = (qDoubleDot_s - timeDerivative(s_s_last, s_s)) - k_ss * s_s - trans(J_s) * k_p * J_s * s_s;
 
 			//	u saturation
@@ -580,18 +603,23 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 
 		printMatToTxt(u_s_file, &u_s);
+		ForceController(0, &J_m1, &JDot_m1, &Y_m1);
 
+		JDot_m1 = timeDerivative(J_m1_last, J_m1);
+		JDot_m2 = timeDerivative(J_m2_last, J_m2);
 		/* 
 		 * part3:send command to robots
 		 */
 		loopCount++;
 		// to master
-		if (!hdWaitForCompletion(Scheduler_ForceOutput1, HD_WAIT_CHECK_STATUS) || !hdWaitForCompletion(Scheduler_ForceOutput2, HD_WAIT_CHECK_STATUS))
+		
+		if (!hdWaitForCompletion(Scheduler_ForceOutput1, HD_WAIT_CHECK_STATUS))
 		{
 			fprintf(stderr, "Press any key to quit.\n");
 			_getch();
 			break;
 		}
+
 		//	get enough data for median filter in the beginning and send command to keep remote UDP working(for blocking)
 		
 		/*
@@ -736,9 +764,10 @@ HDCallbackCode HDCALLBACK ForceOutput1Callback(void *data)
 	
 	hdBeginFrame(DeviceID_1);
 	for (int axis = 0; axis < MasterRobotDOF; axis++)
-		force[axis] = u_m(axis, 0);
-
-	hdSetDoublev(HD_FORCE_OUTPUT, force);
+		force[axis] = 3.0;
+		//force[axis] = forceOutput(axis, 0);
+	hdMakeCurrentDevice(DeviceID_1);
+	hdSetDoublev(HD_CURRENT_FORCE, force);
 	hdEndFrame(DeviceID_1);
 
 	return HD_CALLBACK_CONTINUE;
@@ -750,10 +779,98 @@ HDCallbackCode HDCALLBACK ForceOutput2Callback(void *data)
 
 	hdBeginFrame(DeviceID_2);
 	for (int axis = 0; axis < MasterRobotDOF; axis++)
-		force[axis] = u_m(MasterRobotDOF + axis, 0);
+		force[axis] = forceOutput(axis, 1);
 
 	hdSetDoublev(HD_FORCE_OUTPUT, force);
 	hdEndFrame(DeviceID_2);
 
 	return HD_CALLBACK_CONTINUE;
+}
+
+void ForceController(int MasterNo, mat* J, mat* JDot, mat* Y)
+{
+	vec k_1_vec, k_2_vec;
+	mat gravityCompensate(size(s_m.col(MasterNo)), fill::zeros);
+	mat invJ, k_1, k_2;
+
+	//k_1_vec << 5 * 2.3 << 6 * 2.0 << 7 * 2.0;
+	k_1_vec << 1 << 1 << 1;
+	//k_2_vec << 0.00017 << 0.00025 << 0.00025;
+	k_2_vec << 1 << 1 << 1;
+	k_1 = diagmat(k_1_vec);
+	k_2 = diagmat(k_2_vec);
+
+	(*J)(0, 0) = -l_1_Omni*cos(q_m(0,MasterNo)) * cos(q_m(1,MasterNo))
+		- l_2_Omni * cos(q_m(0,MasterNo)) * cos(q_m(1,MasterNo)) * sin(q_m(2,MasterNo))
+		- l_2_Omni * cos(q_m(0,MasterNo)) * sin(q_m(1,MasterNo)) * cos(q_m(2,MasterNo));
+	(*J)(0, 1) = l_2_Omni * sin(q_m(0,MasterNo)) * sin(q_m(1,MasterNo)) * sin(q_m(2,MasterNo))
+		+ l_1_Omni *sin(q_m(0,MasterNo)) * sin(q_m(1,MasterNo))
+		- l_2_Omni * sin(q_m(0,MasterNo)) *cos(q_m(1,MasterNo)) * cos(q_m(2,MasterNo));
+	(*J)(0, 2) = -l_2_Omni * sin(q_m(0,MasterNo)) * cos(q_m(1,MasterNo)) * cos(q_m(2,MasterNo))
+		+ l_2_Omni * sin(q_m(0,MasterNo)) * sin(q_m(1,MasterNo)) * sin(q_m(2,MasterNo));
+	(*J)(1, 0) = 0;
+	(*J)(1, 1) = l_2_Omni * sin(q_m(1,MasterNo)) * cos(q_m(2,MasterNo))
+		+ l_2_Omni * cos(q_m(1,MasterNo)) * sin(q_m(2,MasterNo))
+		+ l_1_Omni  *  cos(q_m(1,MasterNo));
+	(*J)(1, 2) = l_2_Omni * cos(q_m(1,MasterNo)) * sin(q_m(2,MasterNo))
+		+ l_2_Omni * sin(q_m(1,MasterNo)) * cos(q_m(2,MasterNo));
+	(*J)(2, 0) = -l_2_Omni * sin(q_m(0,MasterNo)) * sin(q_m(1,MasterNo)) * cos(q_m(2,MasterNo))
+		- l_1_Omni * sin(q_m(0,MasterNo)) * cos(q_m(1,MasterNo))
+		- l_2_Omni * sin(q_m(0,MasterNo)) * cos(q_m(1,MasterNo)) * sin(q_m(2,MasterNo));
+	(*J)(2, 1) = l_2_Omni * cos(q_m(0,MasterNo)) * cos(q_m(1,MasterNo)) * cos(q_m(2,MasterNo))
+		- l_2_Omni * cos(q_m(0,MasterNo)) * sin(q_m(1,MasterNo)) * sin(q_m(2,MasterNo))
+		- l_1_Omni * cos(q_m(0,MasterNo)) * sin(q_m(1,MasterNo));
+	(*J)(2, 2) = l_2_Omni * cos(q_m(0,MasterNo)) * cos(q_m(1,MasterNo)) * cos(q_m(2,MasterNo))
+		- l_2_Omni * cos(q_m(0,MasterNo)) * sin(q_m(1,MasterNo)) * sin(q_m(2,MasterNo));
+
+	invJ = inv(*J);
+	v_m.col(MasterNo) = invJ * e_m.col(MasterNo);
+	s_m.col(MasterNo) = qDot_m.col(MasterNo) - v_m.col(MasterNo);
+	a_m.col(MasterNo) = timeDerivative(v_m_last.col(MasterNo), v_m.col(MasterNo));
+
+	(*Y)(0, 0) = a_m(0, MasterNo) * cos(2 * q_m(1, MasterNo)) 
+		- sin(2 * q_m(1, MasterNo))*(v_m(1, MasterNo) * qDot_m(0, MasterNo) - v_m(0, MasterNo) * qDot_m(1, MasterNo));
+	(*Y)(0, 1) = -sin(2 * q_m(1, MasterNo) + 2 * q_m(2, MasterNo))*qDot_m(0, MasterNo) * (v_m(1, MasterNo) + v_m(2, MasterNo)) 
+		- v_m(0, MasterNo) * sin(2 * q_m(1, MasterNo) + 2 * q_m(2, MasterNo))*(qDot_m(1, MasterNo) - qDot_m(2, MasterNo)) 
+		+ a_m(0, MasterNo) * cos(2 * q_m(1, MasterNo) + 2 * q_m(2, MasterNo));
+	(*Y)(0, 2) = a_m(0, MasterNo) * (sin(2 * q_m(1, MasterNo) + q_m(2, MasterNo)) + sin(q_m(2, MasterNo))) 
+		+ 0.5*cos(q_m(2, MasterNo))*(v_m(0, MasterNo) * qDot_m(2, MasterNo) + v_m(2, MasterNo) * qDot_m(0, MasterNo)) 
+		+ cos(2 * q_m(1, MasterNo) + q_m(2, MasterNo))*(v_m(1, MasterNo) * qDot_m(0, MasterNo) + 0.5*v_m(2, MasterNo) * qDot_m(0, MasterNo) + v_m(0, MasterNo) * qDot_m(1, MasterNo) + 0.5*v_m(0, MasterNo) * qDot_m(2, MasterNo));
+	(*Y)(0, 3) = a_m(0, MasterNo);
+	(*Y)(0, 4) = 0;
+	(*Y)(0, 5) = 0;
+	(*Y)(0, 6) = 0;
+	(*Y)(0, 7) = 0;
+
+	(*Y)(1, 0) = v_m(0, MasterNo) * sin(2 * q_m(1, MasterNo))*qDot_m(0, MasterNo);
+	(*Y)(1, 1) = v_m(0, MasterNo) * sin(2 * q_m(1, MasterNo) + 2 * q_m(2, MasterNo))*qDot_m(0, MasterNo);
+	(*Y)(1, 2) = sin(q_m(2, MasterNo))*(2 * a_m(1, MasterNo) + a_m(2, MasterNo)) 
+		- v_m(0, MasterNo) * cos(2 * q_m(1, MasterNo) + q_m(2, MasterNo))*qDot_m(0, MasterNo) 
+		+ cos(q_m(2, MasterNo))*(v_m(2, MasterNo) * qDot_m(1, MasterNo) + v_m(2, MasterNo) * qDot_m(2, MasterNo) + v_m(1, MasterNo) * qDot_m(2, MasterNo));
+	(*Y)(1, 3) = 0;
+	(*Y)(1, 4) = a_m(1, MasterNo);
+	(*Y)(1, 5) = a_m(2, MasterNo);
+	(*Y)(1, 6) = sin(q_m(1, MasterNo) + q_m(2, MasterNo));
+	(*Y)(1, 7) = cos(q_m(1, MasterNo));
+
+
+	(*Y)(2, 0) = 0;
+	(*Y)(2, 1) = v_m(0, MasterNo) * sin(2 * q_m(1, MasterNo) + 2 * q_m(2, MasterNo))*qDot_m(0, MasterNo);
+	(*Y)(2, 2) = a_m(1, MasterNo) * sin(q_m(2, MasterNo)) 
+		- (0.5*v_m(0, MasterNo) * cos(2 * q_m(1, MasterNo) + q_m(2, MasterNo)) + 0.5*v_m(0, MasterNo) * cos(q_m(2, MasterNo)))*qDot_m(0, MasterNo) 
+		- cos(q_m(2, MasterNo))*v_m(1, MasterNo) * qDot_m(1, MasterNo);
+	(*Y)(2, 3) = 0;
+	(*Y)(2, 4) = 0;
+	(*Y)(2, 5) = a_m(1, MasterNo) + a_m(2, MasterNo);
+	(*Y)(2, 6) = sin(q_m(1, MasterNo) + q_m(2, MasterNo));
+	(*Y)(2, 7) = 0;
+
+	ThetaHatDot_m.col(MasterNo) = -Y->t() * s_m.col(MasterNo);
+	ThetaHat_m.col(MasterNo) = ThetaHat_m.col(MasterNo) + ThetaHatDot_m.col(MasterNo) * SAMPLING_TIME;	//integrate
+		
+	gravityCompensate(1, 0) = 250.0*sin(q_m(1, MasterNo) + q_m(2, MasterNo)) + 200.0*cos(q_m(1, MasterNo));
+	gravityCompensate(2, 0) = 250.0*sin(q_m(1, MasterNo) + q_m(2, MasterNo));
+
+	u_m_multiCol.col(MasterNo) = (*Y)*ThetaHat_m - k_1 * s_m.col(MasterNo) - k_2 * J->t() * (*J) * s_m.col(MasterNo);
+	forceOutput.col(MasterNo) = invJ.t() * u_m_multiCol.col(MasterNo) + gravityCompensate;
 }

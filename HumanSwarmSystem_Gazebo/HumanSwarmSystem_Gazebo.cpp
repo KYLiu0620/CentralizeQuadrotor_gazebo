@@ -3,7 +3,7 @@
 
 #include "stdafx.h"
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define SERVER "192.168.19.95"
+#define SERVER "192.168.19.2"
 #define BUFLEN 1024  //Max length of buffer
 #define PORT 1234   //The port on which to listen for incoming data
 #define SAMPLING_TIME 0.01	//unit:second
@@ -95,8 +95,8 @@ mat forceOutput(size(s_m), fill::zeros);
 mat u_s( SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros );
 mat VelocityCommand_s(SlaveRobotNum * SlaveRobotDOF, 1, fill::zeros);
 mat theta_m(MasterRobotDOF * MasterRobotNum, 1, fill::zeros);
-mat ThetaHat_m(rows_ThetaHat_m, 1);
-mat ThetaHatDot_m(rows_ThetaHat_m, 1, fill::zeros);
+mat ThetaHat_m(rows_ThetaHat_m, MasterRobotNum);
+mat ThetaHatDot_m(rows_ThetaHat_m, MasterRobotNum, fill::zeros);
 
 vec vk_p, vk_d, vk_t, valpha;
 mat k_p, k_d, k_t, alpha;
@@ -132,6 +132,7 @@ int _tmain(int argc, _TCHAR* argv[])
 {
 	Sleep(500);	
 	//--------initialize--------
+
 	char* sendtoBuf = NULL;
 	stringstream ss;
 	string string_converted;
@@ -233,22 +234,15 @@ int _tmain(int argc, _TCHAR* argv[])
 	hdMakeCurrentDevice(DeviceID_2);
 	hdEnable(HD_FORCE_OUTPUT);
 	hdStartScheduler();
-	HDSchedulerHandle Scheduler_GetCmd1 = hdScheduleAsynchronous(GetCmd1Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
-	HDSchedulerHandle Scheduler_GetCmd2 = hdScheduleAsynchronous(GetCmd2Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
-	HDSchedulerHandle Scheduler_ForceOutput1 = hdScheduleAsynchronous(ForceOutput1Callback, (void*)0, HD_MAX_SCHEDULER_PRIORITY);
-	HDSchedulerHandle Scheduler_ForceOutput2 = hdScheduleAsynchronous(ForceOutput2Callback, (void*)0, HD_MAX_SCHEDULER_PRIORITY);
-	
+	HDSchedulerHandle Scheduler_ForceOutput1 = hdScheduleAsynchronous(ForceOutput1Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
+	HDSchedulerHandle Scheduler_ForceOutput2 = hdScheduleAsynchronous(ForceOutput2Callback, (void*) 0, HD_MAX_SCHEDULER_PRIORITY);
+
 	//	use sendto() before using recvfrom() to implicitly bind
 	for (int i = 0; i < SlaveRobotDOF * SlaveRobotNum; i++)
 		ss << "0 ";
-	//string_converted = ss.str();
 	sendtoBuf = stringToChar_heap(ss.str());
 	ss.str("");
 	ss.clear();
-	/*
-	char *test = new char[string_converted.size()+1];
-	strcpy(test, string_converted.c_str());
-	*/
 	
 	if (sendto(s, sendtoBuf, BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 	{
@@ -275,6 +269,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	int delay_m_to_s;	//unit:ms
 
 	//--------start--------
+
 	int loopCount = 0;
 	while (!_kbhit())
 	{		
@@ -284,9 +279,9 @@ int _tmain(int argc, _TCHAR* argv[])
 
 		char buf_from_slave[BUFLEN];
 		int timer_loop_start, timer_loop_end;
-
+		
 		timer_loop_start = clock();
-		delay_m_to_s = 1000 + 1000 * sin(0.0001*timer_loop_start);
+		delay_m_to_s = 0/*1000 + 1000 * sin(0.0001*timer_loop_start)*/;	// #delay
 		ss << delay_m_to_s << endl;
 		string_converted = ss.str();
 		fprintf(delay_s_file, string_converted.c_str());
@@ -307,12 +302,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		v_m_last = v_m;
 		
 		//	receive from master and then update X_m_temp
-		if (!hdWaitForCompletion(Scheduler_GetCmd1, HD_WAIT_CHECK_STATUS) || !hdWaitForCompletion(Scheduler_GetCmd2, HD_WAIT_CHECK_STATUS))
-		{
-			fprintf(stderr, "Press any key to quit.\n");
-			_getch();
-			break;
-		}
+		hdScheduleSynchronous(GetCmd1Callback, (void*)0, HD_DEFAULT_SCHEDULER_PRIORITY);
+		hdScheduleSynchronous(GetCmd2Callback, (void*)0, HD_DEFAULT_SCHEDULER_PRIORITY);
 		
 		//	receive from slave and then update X_s
 		if (recvfrom(s, buf_from_slave, BUFLEN, 0, (struct sockaddr *) &si_other, &slen) == SOCKET_ERROR)
@@ -392,8 +383,7 @@ int _tmain(int argc, _TCHAR* argv[])
 */
 		}
 
-		//	shift master coordinate to match slave initial condition
-		X_m = X_m - X_m_initial + inv(alpha) * X_s_initial;		
+		X_m = X_m - X_m_initial + inv(alpha) * X_s_initial;		//	shift master coordinate to match slave initial condition
 		
 
 		for (int axis = 0; axis < SlaveRobotDOF; axis++)	//lower bound of command from omni
@@ -408,6 +398,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			TimeDelayBuffer_m_to_s = new DelayedBuffer(DelayedData(X_m, 0, 0));
 		
 		//time delay
+		
 		if (DELAY_SWITCH)
 		{
 			data_m_to_s = DelayedData(X_m, loopCount, timer_loop_start + delay_m_to_s);
@@ -422,6 +413,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 		//	controller
 		//	update time derivative of X,q,qDot
+
 		if (loopCount != 0)	//skip at first because last value doesn't exist
 		{
 			XDot_s = timeDerivative(X_s_last, X_s);
@@ -430,6 +422,7 @@ int _tmain(int argc, _TCHAR* argv[])
 			qDoubleDot_s = timeDerivative(qDot_s_last, qDot_s);
 		}
 		printMatToTxt(qDot_s_file, &qDot_s);
+		
 		/* 
 		 * part2:update other parameters
 		 */		
@@ -604,6 +597,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
 		printMatToTxt(u_s_file, &u_s);
 		ForceController(0, &J_m1, &JDot_m1, &Y_m1);
+		ForceController(1, &J_m2, &JDot_m2, &Y_m2);
 
 		JDot_m1 = timeDerivative(J_m1_last, J_m1);
 		JDot_m2 = timeDerivative(J_m2_last, J_m2);
@@ -612,13 +606,15 @@ int _tmain(int argc, _TCHAR* argv[])
 		 */
 		loopCount++;
 		// to master
-		
-		if (!hdWaitForCompletion(Scheduler_ForceOutput1, HD_WAIT_CHECK_STATUS))
+		/*
+		if (!hdWaitForCompletion(Scheduler_ForceOutput1, HD_WAIT_CHECK_STATUS) || !hdWaitForCompletion(Scheduler_ForceOutput2, HD_WAIT_CHECK_STATUS))
 		{
 			fprintf(stderr, "Press any key to quit.\n");
 			_getch();
 			break;
 		}
+		*/
+		//ForceOutput1Callback((void*)0);
 
 		//	get enough data for median filter in the beginning and send command to keep remote UDP working(for blocking)
 		
@@ -648,13 +644,14 @@ int _tmain(int argc, _TCHAR* argv[])
 		ss.clear();
 		if (sendto(s, sendtoBuf, BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 		{
-			printf("2sendto() failed with error code : %d", WSAGetLastError());
-			system("PAUSE");
-			exit(EXIT_FAILURE);
+			printf("2sendto() failed with error code : %d\n", WSAGetLastError());
+			break;
+			//system("PAUSE");
+			//exit(EXIT_FAILURE);
 		}
 		delete[] sendtoBuf;
 		sendtoBuf = NULL;
-		cout << loopCount << endl;
+		//cout << loopCount << endl;
 		//	make fix sampling time
 		timer_loop_end = clock();
 		int until_sampling = SAMPLING_TIME * 1000 - (timer_loop_end - timer_loop_start);
@@ -666,8 +663,6 @@ int _tmain(int argc, _TCHAR* argv[])
 	delete TimeDelayBuffer_m_to_s;
 	TimeDelayBuffer_m_to_s = NULL;
 	hdStopScheduler();
-	hdUnschedule(Scheduler_GetCmd1);
-	hdUnschedule(Scheduler_GetCmd2);
 	hdUnschedule(Scheduler_ForceOutput1);
 	hdUnschedule(Scheduler_ForceOutput2);
 	hdDisableDevice(DeviceID_1);
@@ -700,7 +695,7 @@ HDCallbackCode HDCALLBACK GetCmd1Callback(void *data)
 	}
 	
 	hdEndFrame(DeviceID_1);
-	return HD_CALLBACK_CONTINUE;
+	return HD_CALLBACK_DONE;
 }
 
 HDCallbackCode HDCALLBACK GetCmd2Callback(void *data)
@@ -717,7 +712,7 @@ HDCallbackCode HDCALLBACK GetCmd2Callback(void *data)
 	}
 	
 	hdEndFrame(DeviceID_2);
-	return HD_CALLBACK_CONTINUE;
+	return HD_CALLBACK_DONE;
 }
 
 vec medianFilter(mat* dataBuf, mat* newData, int* BufFlag)
@@ -764,8 +759,7 @@ HDCallbackCode HDCALLBACK ForceOutput1Callback(void *data)
 	
 	hdBeginFrame(DeviceID_1);
 	for (int axis = 0; axis < MasterRobotDOF; axis++)
-		force[axis] = 3.0;
-		//force[axis] = forceOutput(axis, 0);
+		force[axis] = /*sin(0.0001*clock())*/forceOutput(axis, 0);
 	hdMakeCurrentDevice(DeviceID_1);
 	hdSetDoublev(HD_CURRENT_FORCE, force);
 	hdEndFrame(DeviceID_1);
@@ -779,9 +773,9 @@ HDCallbackCode HDCALLBACK ForceOutput2Callback(void *data)
 
 	hdBeginFrame(DeviceID_2);
 	for (int axis = 0; axis < MasterRobotDOF; axis++)
-		force[axis] = forceOutput(axis, 1);
-
-	hdSetDoublev(HD_FORCE_OUTPUT, force);
+		force[axis] = /*sin(0.0001*clock())*/forceOutput(axis, 0);
+	hdMakeCurrentDevice(DeviceID_2);
+	hdSetDoublev(HD_CURRENT_FORCE, force);
 	hdEndFrame(DeviceID_2);
 
 	return HD_CALLBACK_CONTINUE;
@@ -792,11 +786,12 @@ void ForceController(int MasterNo, mat* J, mat* JDot, mat* Y)
 	vec k_1_vec, k_2_vec;
 	mat gravityCompensate(size(s_m.col(MasterNo)), fill::zeros);
 	mat invJ, k_1, k_2;
+	mat ini_cancel = -(-X_m_initial + inv(alpha) * X_s_initial);;
 
-	//k_1_vec << 5 * 2.3 << 6 * 2.0 << 7 * 2.0;
-	k_1_vec << 1 << 1 << 1;
-	//k_2_vec << 0.00017 << 0.00025 << 0.00025;
-	k_2_vec << 1 << 1 << 1;
+	k_1_vec << 5 * 2.3 << 6 * 2.0 << 7 * 2.0;
+	k_2_vec << 0.00017 << 0.00025 << 0.00025;
+	//k_1_vec << 1 << 1 << 1;
+	//k_2_vec << 1 << 1 << 1;
 	k_1 = diagmat(k_1_vec);
 	k_2 = diagmat(k_2_vec);
 
@@ -824,7 +819,7 @@ void ForceController(int MasterNo, mat* J, mat* JDot, mat* Y)
 		- l_2_Omni * cos(q_m(0,MasterNo)) * sin(q_m(1,MasterNo)) * sin(q_m(2,MasterNo));
 
 	invJ = inv(*J);
-	v_m.col(MasterNo) = invJ * e_m.col(MasterNo);
+	v_m.col(MasterNo) = invJ * (e_m.col(MasterNo) + ini_cancel.rows(MasterNo * MasterRobotDOF, MasterNo * MasterRobotDOF + MasterRobotDOF - 1));
 	s_m.col(MasterNo) = qDot_m.col(MasterNo) - v_m.col(MasterNo);
 	a_m.col(MasterNo) = timeDerivative(v_m_last.col(MasterNo), v_m.col(MasterNo));
 
@@ -868,9 +863,10 @@ void ForceController(int MasterNo, mat* J, mat* JDot, mat* Y)
 	ThetaHatDot_m.col(MasterNo) = -Y->t() * s_m.col(MasterNo);
 	ThetaHat_m.col(MasterNo) = ThetaHat_m.col(MasterNo) + ThetaHatDot_m.col(MasterNo) * SAMPLING_TIME;	//integrate
 		
-	gravityCompensate(1, 0) = 250.0*sin(q_m(1, MasterNo) + q_m(2, MasterNo)) + 200.0*cos(q_m(1, MasterNo));
-	gravityCompensate(2, 0) = 250.0*sin(q_m(1, MasterNo) + q_m(2, MasterNo));
+	gravityCompensate(1, 0) = 100 * sin(q_m(1, MasterNo) + q_m(2, MasterNo)) + 80 * cos(q_m(1, MasterNo));
+	gravityCompensate(2, 0) = 100 * sin(q_m(1, MasterNo) + q_m(2, MasterNo));
 
-	u_m_multiCol.col(MasterNo) = (*Y)*ThetaHat_m - k_1 * s_m.col(MasterNo) - k_2 * J->t() * (*J) * s_m.col(MasterNo);
-	forceOutput.col(MasterNo) = invJ.t() * u_m_multiCol.col(MasterNo) + gravityCompensate;
+	u_m_multiCol.col(MasterNo) = (*Y)*ThetaHat_m.col(MasterNo) - k_1 * s_m.col(MasterNo) - k_2 * J->t() * (*J) * s_m.col(MasterNo);
+	forceOutput.col(MasterNo) = invJ.t() * (u_m_multiCol.col(MasterNo) + gravityCompensate);
+	forceOutput.col(MasterNo).t().print("f:");
 }

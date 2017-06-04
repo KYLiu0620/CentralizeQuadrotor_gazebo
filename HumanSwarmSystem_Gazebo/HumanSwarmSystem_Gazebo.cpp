@@ -133,7 +133,8 @@ int _tmain(int argc, _TCHAR* argv[])
 	Sleep(500);	
 	//--------initialize--------
 
-	char* sendtoBuf = NULL;
+	char* charBuf = NULL;
+	char sendtoBuf[BUFLEN];
 	stringstream ss;
 	string string_converted;
 
@@ -240,18 +241,20 @@ int _tmain(int argc, _TCHAR* argv[])
 	//	use sendto() before using recvfrom() to implicitly bind
 	for (int i = 0; i < SlaveRobotDOF * SlaveRobotNum; i++)
 		ss << "0 ";
-	sendtoBuf = stringToChar_heap(ss.str());
+	charBuf = stringToChar_heap(ss.str());
 	ss.str("");
 	ss.clear();
 	
+	strcpy(sendtoBuf, charBuf);
+
 	if (sendto(s, sendtoBuf, BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 	{
 		printf("1sendto() failed with error code : %d", WSAGetLastError());
 		system("PAUSE");
 		exit(EXIT_FAILURE);
 	}
-	delete[] sendtoBuf;
-	sendtoBuf = NULL;
+	delete[] charBuf;
+	charBuf = NULL;
 
 	//	open txt file for recording
 	FILE* X_m_no_delay_file = fopen("..\\record\\X_m_no_delay.txt", "w");
@@ -309,8 +312,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		if (recvfrom(s, buf_from_slave, BUFLEN, 0, (struct sockaddr *) &si_other, &slen) == SOCKET_ERROR)
 		{
 			printf("recvfrom() failed with error code : %d", WSAGetLastError());
-			system("PAUSE");
-			exit(EXIT_FAILURE);
+			break;
+			//exit(EXIT_FAILURE);
 		}
 		//puts(buf_from_slave);
 		
@@ -638,10 +641,13 @@ int _tmain(int argc, _TCHAR* argv[])
 				ss << VelocityCommand_s(num * SlaveRobotDOF + axis, 0) << " ";
 			}
 		}
-		sendtoBuf = stringToChar_heap(ss.str());
+		charBuf = stringToChar_heap(ss.str());
 		//	clear stringstream
 		ss.str("");
 		ss.clear();
+
+		strcpy(sendtoBuf, charBuf);
+
 		if (sendto(s, sendtoBuf, BUFLEN, 0, (struct sockaddr *) &si_other, slen) == SOCKET_ERROR)
 		{
 			printf("2sendto() failed with error code : %d\n", WSAGetLastError());
@@ -649,8 +655,8 @@ int _tmain(int argc, _TCHAR* argv[])
 			//system("PAUSE");
 			//exit(EXIT_FAILURE);
 		}
-		delete[] sendtoBuf;
-		sendtoBuf = NULL;
+		delete[] charBuf;
+		charBuf = NULL;
 		//cout << loopCount << endl;
 		//	make fix sampling time
 		timer_loop_end = clock();
@@ -788,7 +794,7 @@ void ForceController(int MasterNo, mat* J, mat* JDot, mat* Y)
 	mat invJ, k_1, k_2;
 	mat ini_cancel = -(-X_m_initial + inv(alpha) * X_s_initial);;
 
-	k_1_vec << 5 * 2.3 << 6 * 2.0 << 7 * 2.0;
+	k_1_vec << 5 * 2.3 * 2 << 6 * 2.0 * 2 << 7 * 2.0 * 2;
 	k_2_vec << 0.00017 << 0.00025 << 0.00025;
 	//k_1_vec << 1 << 1 << 1;
 	//k_2_vec << 1 << 1 << 1;
